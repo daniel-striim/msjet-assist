@@ -76,15 +76,66 @@ if (Test-Path $agentConfPath) {
             # https://striim-downloads.striim.com/Releases/5.0.6/Striim_5.0.6.zip
 
             $downloadUrl = "https://striim-downloads.striim.com/Releases/$striimVersion/Striim_$urlAddAgent$striimVersion.zip"  #Example
-            Write-Host "[Envrnmt]  Striim will be downloaded from: $downloadUrl"
-            Write-Host "[Envrnmt]  (Download functionality not yet implemented in this mock-up)"
 
-            # In a real implementation, you would:
-            # 1. Download the Striim distribution from $downloadUrl
-            # 2. Extract the contents to $striimInstallPath
-            # 3. Set necessary environment variables (if needed)
-            # 4.  Possibly run any initial setup scripts.
             Write-Host "[Envrnmt] Success: Striim Download path set to: $downloadUrl"
+
+            Write-Host "[Envrnmt]  Striim will be downloaded from: $downloadUrl"
+
+            if (!(Test-Path -Path $striimInstallPath -PathType Container)) {
+                try {
+                    New-Item -ItemType Directory -Path $striimInstallPath -Force -ErrorAction Stop
+                    Write-Host "[Envrnmt] Created installation directory: $striimInstallPath"
+                }
+                catch {
+                    Write-Error "[Error] Failed to create directory: $($_.Exception.Message)"
+                    exit 1  # Exit with a non-zero exit code to indicate failure
+                }
+            }
+
+            $zipFilePath = Join-Path -Path $striimInstallPath -ChildPath "Striim_$striimVersion.zip"
+
+            # Use Invoke-WebRequest for robust downloading (PowerShell 3.0+)
+            try {
+                Write-Host "[Envrnmt] Downloading Striim from $downloadUrl to $zipFilePath..."
+                Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing # -UseBasicParsing is for older servers, may not need
+            }
+            catch {
+                Write-Error "[Error] Download failed: $($_.Exception.Message)"
+                exit 1
+            }
+
+            Write-Host "[Envrnmt] Download complete."
+
+            # --- Extract the ZIP File ---
+            try {
+                Write-Host "[Envrnmt] Extracting Striim to $striimInstallPath..."
+                Expand-Archive -Path $zipFilePath -DestinationPath $striimInstallPath -Force -ErrorAction Stop
+            }
+            catch {
+                Write-Error "[Error] Extraction failed: $($_.Exception.Message)"
+                  # Attempt to clean up the potentially partially-extracted files.
+                if (Test-Path -Path $striimInstallPath) {
+                   try {
+                        Remove-Item -Path $striimInstallPath\* -Recurse -Force -ErrorAction SilentlyContinue # try deleting
+                      }
+                  catch {
+                      Write-Warning "[Warning] Could not completley clean up failed extraction in $striimInstallPath. Manual cleanup may be needed"
+                  }
+                }
+                exit 1
+            }
+
+            # --- Cleanup ---
+            # Remove the downloaded ZIP file after successful extraction.
+            try {
+                Remove-Item -Path $zipFilePath -Force -ErrorAction Stop
+                Write-Host "[Envrnmt] Removed temporary ZIP file: $zipFilePath"
+            }
+            catch {
+                Write-Warning "[Warning] Failed to remove ZIP file: $($_.Exception.Message)"
+                #  Not a critical error, so don't exit. Just warn.
+            }
+
 
         } else {
             # If neither file is found, ask the user
