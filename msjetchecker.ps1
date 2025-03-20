@@ -242,6 +242,15 @@ if ($nodeType -eq "A") {
                     } else {
                         # Property has a valid value
                         Write-Host "[Config ] Success: '$prop' found in agent.conf with value: $propValue"
+                        Write-Host "[Config ] Current value: '$prop' is '$propValue'. Do you want to update it? (y/n, default is no)"
+                        $response = Read-Host
+                        if ($response -eq "y") {
+                            $newValue = Read-Host "Enter the new value for $prop"
+                            $agentConfLines[$lineIndex] = "$prop=$newValue"  # Update the line
+                            Write-Host "[Config ] Updated '$prop' with new value: $newValue"
+                        } else {
+                            Write-Host "[Config ] '$prop' remains unchanged."
+                        }
                         $propsFound[$prop] = $true
                     }
                     break  # Exit the inner loop once a property is found on a line
@@ -304,6 +313,15 @@ if ($nodeType -eq "N") {
                     } else {
                         # Property has a valid value
                         Write-Host "[Config ] Success: '$prop' found in startUp.properties with value: $propValue"
+                        Write-Host "[Config ] Current value: '$prop' is '$propValue'. Do you want to update it? (y/n, default is no)"
+                        $response = Read-Host
+                        if ($response -eq "y") {
+                            $newValue = Read-Host "Enter the new value for $prop"
+                            $startUpPropsLines[$lineIndex] = "$prop=$newValue"  # Update the line
+                            Write-Host "[Config ] Updated '$prop' with new value: $newValue"
+                        } else {
+                            Write-Host "[Config ] '$prop' remains unchanged."
+                        }
                         $propsFound[$prop] = $true
                     }
                     break  # Exit the inner loop once a property is found on a line
