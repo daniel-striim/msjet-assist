@@ -115,6 +115,9 @@ if (Test-Path $agentConfPath) {
                     Write-Host "[Envrnmt] Download complete!"
                 } else {
                     Write-Host "[Envrnmt] Download failed. HTTP Status: $($response.StatusCode)"
+                    Write-Host "[Envrnmt] Downloading using slower method..."
+                    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing
+                    Write-Host "[Envrnmt] Download complete!"
                 }
 
                 # Dispose of the HttpClient instance
@@ -701,7 +704,6 @@ if (Get-Service $serviceName -ErrorAction SilentlyContinue) {
 					Move-Item $extractedContent.FullName -Destination $serviceConfigFolder -Force
 
 					# Clean up temporary directory and downloaded ZIP
-					Remove-Item $tempExtractPath -Recurse -Force
 					Remove-Item $downloadPath -Force
 
 				} else {
