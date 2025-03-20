@@ -15,7 +15,7 @@ This PowerShell script automates the configuration and verification of a Striim 
     cd C:\striim\agent
     
     REM Run the following to auto-download and install msjetchcker:
-    Invote-WebRequest -Uri "https://raw.githubusercontent.com/daniel-striim/msjet-assist/refs/heads/main/msjetchecker.ps1" -OutFile "msjetchecker.ps1"
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/daniel-striim/msjet-assist/refs/heads/main/msjetchecker.ps1" -OutFile "msjetchecker.ps1"
     Unblock-File -Path "msjetchecker.ps1"
     .\msjetchecker.ps1
     ```
