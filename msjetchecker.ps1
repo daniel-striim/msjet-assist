@@ -18,21 +18,111 @@ if (Test-Path $agentConfPath) {
     $nodeType = "N"  # Node
     Write-Host "[Envrnmt]       -> NODE environment based on startUp.properties"
 } else {
-    # If neither file is found, ask the user
-    $nodeType = Read-Host "[Envrnmt]  Is this Agent (default) or Node? (Enter 'A' for Agent or 'N' for Node)"
-    if ($nodeType -eq "") { $nodeType = "A" }
-    $nodeType = $nodeType.ToUpper()
+    # If neither file is found, check if Striim is installed, and offer to download/install
+    $striimLibPath = -join ($striimInstallPath, "\lib")
+    if (-not (Test-Path $striimLibPath -PathType Container)) {
+        Write-Host "[Envrnmt] Striim installation not found in current directory."
+        $downloadStriim = Read-Host "[Envrnmt]  Do you want to automatically download and install Striim? (Y/N)"
+
+        if ($downloadStriim.ToUpper() -eq "Y") {
+            $nodeType = Read-Host "[Envrnmt]  Do you want to install Striim Node (N) or Agent (A)? (Enter 'N' or 'A')"
+            $nodeType = $nodeType.ToUpper()
+
+            $urlAddAgent = ""
+
+             while ($nodeType -ne "N" -and $nodeType -ne "A")
+            {
+                Write-Host "Invalid input. Please enter 'N' for Node or 'A' for Agent."
+                $nodeType = Read-Host "[Envrnmt]  Do you want to install Striim Node (N) or Agent (A)? (Enter 'N' or 'A')"
+                $nodeType = $nodeType.ToUpper()
+                $urlAddAgent = "Agent_"
+            }
+
+            $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6):"
+            # Validate Version Input (Now supports 3 or 4 parts, and optional letter at the end)
+            while (<span class="math-inline">striimVersion \-notmatch "^\\d\+\\\.\\d\+\\\.\\d\+\(\\\.\\d\+\)?\[A\-Za\-z\]?</span>") {
+                Write-Host "Invalid version format. Please use the format X.X.X, X.X.X.X, or X.X.X.XA (e.g., 4.2.0, 4.2.0.20, or 4.2.0.20A)."
+                $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version (e.g., 4.2.0.20 or 5.0.6):"
+            }
+
+            if ($nodeType -eq "N") {
+                $defaultStriimInstallPath = "C:\striim"
+            } else {
+                $defaultStriimInstallPath = "C:\striim\agent"
+            }
+
+            $striimInstallPathInput = Read-Host "[Envrnmt]  Enter Striim installation path (Default: '$defaultStriimInstallPath'):"
+            if ($striimInstallPathInput -ne "") {
+                $striimInstallPath = $striimInstallPathInput
+            } else {
+                $striimInstallPath = $defaultStriimInstallPath
+            }
+
+            # Create the Striim install directory if it does not exist.
+            if (-not (Test-Path -Path $striimInstallPath))
+            {
+                try {
+                    New-Item -ItemType Directory -Path $striimInstallPath -Force -ErrorAction Stop | Out-Null
+                    Write-Host "[Envrnmt] Success: Created Striim installation directory at '$striimInstallPath'."
+                }
+                catch {
+                    Write-Host "[Envrnmt] Error: Failed to create directory '$striimInstallPath': $($_.Exception.Message)"
+                    exit 1
+                }
+            }
+
+            # Mock Download URL (replace with actual logic later)
+            # https://striim-downloads.striim.com/Releases/5.0.6/Striim_Agent_5.0.6.tgz
+            # https://striim-downloads.striim.com/Releases/5.0.6/Striim_5.0.6.zip
+
+            $downloadUrl = "https://striim-downloads.striim.com/Releases/$striimVersion/Striim_$urlAddAgent$striimVersion.zip"  #Example
+            Write-Host "[Envrnmt]  Striim will be downloaded from: $downloadUrl"
+            Write-Host "[Envrnmt]  (Download functionality not yet implemented in this mock-up)"
+
+            # In a real implementation, you would:
+            # 1. Download the Striim distribution from $downloadUrl
+            # 2. Extract the contents to $striimInstallPath
+            # 3. Set necessary environment variables (if needed)
+            # 4.  Possibly run any initial setup scripts.
+            Write-Host "[Envrnmt] Success: Striim Download path set to: $downloadUrl"
+
+        } else {
+            # If neither file is found, ask the user
+            $nodeType = Read-Host "[Envrnmt]  Is this Agent (default) or Node? (Enter 'A' for Agent or 'N' for Node)"
+            if ($nodeType -eq "") { $nodeType = "A" }
+            $nodeType = $nodeType.ToUpper()
+        }
+    }
+    else {
+        # If neither file is found, ask the user
+        $nodeType = Read-Host "[Envrnmt]  Is this Agent (default) or Node? (Enter 'A' for Agent or 'N' for Node)"
+        if ($nodeType -eq "") { $nodeType = "A" }
+        $nodeType = $nodeType.ToUpper()
+    }
 }
 
 # Ask user for Striim install path only if node type couldn't be auto-detected
-if ($nodeType -eq "") {
-    $striimInstallPathInput = Read-Host "[Envrnmt] Provide Striim install path or press Enter to default to $($striimInstallPath):"
+if ($nodeType -eq "" -or (-not (Test-Path $striimInstallPath -PathType Container))) {
+    # Determine default path based on node type, only if not already set by download process
+    if(-not $striimInstallPath) {
+        if ($nodeType -eq "N") {
+            $defaultStriimInstallPath = "C:\striim"
+        }
+        else {
+            $defaultStriimInstallPath = "C:\striim\agent"
+        }
+    } else {
+        $defaultStriimInstallPath = $striimInstallPath
+    }
+    $striimInstallPathInput = Read-Host "[Envrnmt] Provide Striim install path or press Enter to default to $($defaultStriimInstallPath):"
     if ($striimInstallPathInput -ne "") {
         $striimInstallPath = $striimInstallPathInput
+    } else {
+        $striimInstallPath = $defaultStriimInstallPath
     }
     Write-Host "[Envrnmt] Success: User set Striim Install Path set to: $striimInstallPath"
 } else {
-	Write-Host "[Envrnmt] Success: Striim Install Path set to: $striimInstallPath"
+    Write-Host "[Envrnmt] Success: Striim Install Path set to: $striimInstallPath"
 }
 
 # Agent-specific checks
