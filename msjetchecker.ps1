@@ -89,7 +89,7 @@ if (Test-Path $agentConfPath) {
                 }
             }
 
-            $zipFilePath = Join-Path -Path $striimInstallPath -ChildPath "Striim_$striimVersion.zip"
+            $zipFilePath = Join-Path -Path $striimInstallPath -ChildPath "Striim_$urlAddAgent$striimVersion.zip"
 
             # Use Invoke-WebRequest for robust downloading (PowerShell 3.0+)
             try {
