@@ -96,7 +96,7 @@ if (Test-Path $agentConfPath) {
 
             # Use Invoke-WebRequest for robust downloading (PowerShell 3.0+)
             try {
-                Write-Host "[Envrnmt] Downloading Striim from $downloadUrl to $zipFilePath..."
+                Write-Host "[Envrnmt] Downloading Striim from $downloadUrl to $zipFilePath... (note: this may take a few minutes depending on your internet speed; there is no progress bar)"
                 # Slow: Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing # -UseBasicParsing is for older servers, may not need
                 # Create an instance of HttpClient
 
@@ -197,47 +197,68 @@ if ($nodeType -eq "" -or (-not (Test-Path $striimInstallPath -PathType Container
 
 # Agent-specific checks
 if ($nodeType -eq "A") {
-	Write-Host "[Config ]       -> AGENT -> Specific Tests for configuration:"
+    Write-Host "[Config ]       -> AGENT -> Specific Tests for configuration:"
     $agentConfPath = -join ($striimInstallPath, "\conf\agent.conf")
 
     # Check if agent.conf exists
     if (Test-Path $agentConfPath) {
         $agentConfLines = Get-Content $agentConfPath
 
-        $clusterNameFound = $false
-        $serverNodeAddressFound = $false
+        # Define required and optional properties
+        $requiredProps = "striim.cluster.clusterName", "striim.node.servernode.address"
+        $optionalProps = "MEM_MAX"  # Example optional property
+        $propsFound = @{}  # Dictionary to track found properties
 
-        foreach ($line in $agentConfLines) {
-            # Check for striim.cluster.clusterName with a non-empty value
-            if ($line -match "striim\.cluster\.clusterName\s*=\s*(.*)") {
-                $clusterNameValue = $matches[1]
-                if ($clusterNameValue -ne "") {
-                    Write-Host "[Config ] Success: 'striim.cluster.clusterName' found in agent.conf with value: $clusterNameValue"
-                    $clusterNameFound = $true
-                } else {
-                    Write-Host "[Config ] Fail***: 'striim.cluster.clusterName' found in agent.conf but has no value. Please provide a value."
+        # Initialize required properties as not found
+        foreach ($prop in $requiredProps) {
+            $propsFound[$prop] = $false
+        }
+
+        # Process each line and check for required properties
+        foreach ($lineIndex in 0..($agentConfLines.Length - 1)) {
+            $line = $agentConfLines[$lineIndex]
+
+            foreach ($prop in $requiredProps + $optionalProps) {
+                if ($line -match "^#?\s*$prop\s*=\s*(.*)") {
+                    $propValue = $matches[1]
+
+                    if ($line.StartsWith("#")) {
+                        Write-Host "[Config ] '$prop' is commented out. Would you like to uncomment it and set a value? (y/n)"
+                        $response = Read-Host
+                        if ($response -eq "y") {
+                            $newValue = Read-Host "Enter a value for $prop"
+                            $agentConfLines[$lineIndex] = "$prop=$newValue"
+                            Write-Host "[Config ] Updated '$prop' with value: $newValue"
+                        } else {
+                            Write-Host "[Config ] '$prop' remains commented out."
+                        }
+                    } elseif ($propValue -eq "") {
+                        Write-Host "[Config ] '$prop' is empty. Please provide a value."
+                        $newValue = Read-Host "Enter a value for $prop"
+                        $agentConfLines[$lineIndex] = "$prop=$newValue"
+                        Write-Host "[Config ] Updated '$prop' with value: $newValue"
+                    } else {
+                        Write-Host "[Config ] Success: '$prop' found in agent.conf with value: $propValue"
+                        $propsFound[$prop] = $true
+                    }
+                    break  # Exit the inner loop once a property is found on a line
                 }
             }
+        }
 
-            # Check for striim.node.servernode.address with a non-empty value
-            if ($line -match "striim\.node\.servernode\.address\s*=\s*(.*)") {
-                $serverNodeAddressValue = $matches[1]
-                if ($serverNodeAddressValue -ne "") {
-                    Write-Host "[Config ] Success: 'striim.node.servernode.address' found in agent.conf with value: $serverNodeAddressValue"
-                    $serverNodeAddressFound = $true
-                } else {
-                    Write-Host "[Config ] Fail***: 'striim.node.servernode.address' found in agent.conf but has no value. Please provide a value."
-                }
+        # Prompt for any missing required properties
+        foreach ($prop in $requiredProps) {
+            if (-not $propsFound[$prop]) {
+                Write-Host "[Config ] '$prop' not found in agent.conf. Please provide a value."
+                $newValue = Read-Host "Enter a value for $prop"
+                $agentConfLines += "$prop=$newValue"
+                Write-Host "[Config ] Added '$prop' with value: $newValue"
             }
         }
 
-        # Check if properties were found at all
-        if (-not $clusterNameFound) {
-            Write-Host "[Config ] Fail***: 'striim.cluster.clusterName' not found in agent.conf. Please provide a value."
-        }
-        if (-not $serverNodeAddressFound) {
-            Write-Host "[Config ] Fail***: 'striim.node.servernode.address' not found in agent.conf. Please provide a value."
-        }
+        # Save the updated content to the file
+        Write-Host "[Config ] Saving changes to agent.conf"
+        Set-Content $agentConfPath $agentConfLines
     } else {
         Write-Host "[Config ] Fail***: agent.conf not found in $($striimInstallPath)\conf"
     }
@@ -245,40 +266,68 @@ if ($nodeType -eq "A") {
 
 # Node-specific checks
 if ($nodeType -eq "N") {
-	Write-Host "[Config ]       -> NODE -> Specific Tests for configuration:"
+    Write-Host "[Config ]       -> NODE -> Specific Tests for configuration:"
     $startUpPropsPath = -join ($striimInstallPath, "\conf\startUp.properties")
 
     # Check if startUp.properties exists
     if (Test-Path $startUpPropsPath) {
         $startUpPropsLines = Get-Content $startUpPropsPath
 
+        # Define required and optional properties
         $requiredProps = "CompanyName", "LicenceKey", "ProductKey", "WAClusterName"
+        $optionalProps = "MEM_MAX"
         $propsFound = @{}  # Dictionary to track found properties
+
+        # Initialize required properties as not found
         foreach ($prop in $requiredProps) {
             $propsFound[$prop] = $false
         }
 
-        foreach ($line in $startUpPropsLines) {
-            foreach ($prop in $requiredProps) {
-                if ($line -match "$prop\s*=\s*(.*)") {
+        # Process each line and check for required properties
+        foreach ($lineIndex in 0..($startUpPropsLines.Length - 1)) {
+            $line = $startUpPropsLines[$lineIndex]
+
+            foreach ($prop in $requiredProps + $optionalProps) {
+                if ($line -match "^#?\s*$prop\s*=\s*(.*)") {
                     $propValue = $matches[1]
-                    if ($propValue -ne "") {
+
+                    if ($line.StartsWith("#")) {
+                        Write-Host "[Config ] '$prop' is commented out. Would you like to uncomment it and set a value? (y/n)"
+                        $response = Read-Host
+                        if ($response -eq "y") {
+                            $newValue = Read-Host "Enter a value for $prop"
+                            $startUpPropsLines[$lineIndex] = "$prop=$newValue"
+                            Write-Host "[Config ] Updated '$prop' with value: $newValue"
+                        } else {
+                            Write-Host "[Config ] '$prop' remains commented out."
+                        }
+                    } elseif ($propValue -eq "") {
+                        Write-Host "[Config ] '$prop' is empty. Please provide a value."
+                        $newValue = Read-Host "Enter a value for $prop"
+                        $startUpPropsLines[$lineIndex] = "$prop=$newValue"
+                        Write-Host "[Config ] Updated '$prop' with value: $newValue"
+                    } else {
                         Write-Host "[Config ] Success: '$prop' found in startUp.properties with value: $propValue"
                         $propsFound[$prop] = $true
-                    } else {
-                        Write-Host "[Config ] Fail***: '$prop' found in startUp.properties but has no value. Please provide a value."
                     }
                     break  # Exit the inner loop once a property is found on a line
                 }
             }
         }
 
-        # Check if all required properties were found
+        # Prompt for any missing required properties
         foreach ($prop in $requiredProps) {
             if (-not $propsFound[$prop]) {
-                Write-Host "[Config ] Fail***: '$prop' not found in startUp.properties. Please provide a value."
+                Write-Host "[Config ] '$prop' not found in startUp.properties. Please provide a value."
+                $newValue = Read-Host "Enter a value for $prop"
+                $startUpPropsLines += "$prop=$newValue"
+                Write-Host "[Config ] Added '$prop' with value: $newValue"
             }
         }
+
+        # Save the updated content to the file
+        Write-Host "[Config ] Saving changes to startUp.properties"
+        Set-Content $startUpPropsPath $startUpPropsLines
     } else {
         Write-Host "[Config ] Fail***: startUp.properties not found in $($striimInstallPath)\conf"
     }
