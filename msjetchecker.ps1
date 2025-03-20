@@ -35,9 +35,10 @@ if (Test-Path $agentConfPath) {
                 Write-Host "Invalid input. Please enter 'N' for Node or 'A' for Agent."
                 $nodeType = Read-Host "[Envrnmt]  Do you want to install Striim Node (N) or Agent (A)? (Enter 'N' or 'A')"
                 $nodeType = $nodeType.ToUpper()
-                if ($nodeType -eq "A") {
-                    $urlAddAgent = "Agent_"
-                }
+            }
+
+            if ($nodeType -eq "A") {
+                $urlAddAgent = "Agent_"
             }
 
             $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6):"
