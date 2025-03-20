@@ -9,8 +9,14 @@ This PowerShell script automates the configuration and verification of a Striim 
 
 ## Usage
 
-2.  **Run the script:** Execute the script from the PowerShell command line:
+2.  **Run the script:** Execute the script from the PowerShell command line As Administrator:
     ```powershell
+    REM Navigate to your Striim base install directory
+    cd C:\striim\agent
+    
+    REM Run the following to auto-download and install msjetchcker:
+    Invote-WebRequest -Uri "https://raw.githubusercontent.com/daniel-striim/msjet-assist/refs/heads/main/msjetchecker.ps1" -OutFile "msjetchecker.ps1"
+    Unblock-File -Path "msjetchecker.ps1"
     .\msjetchecker.ps1
     ```
 
