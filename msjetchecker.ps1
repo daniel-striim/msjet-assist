@@ -94,14 +94,33 @@ if (Test-Path $agentConfPath) {
             # Use Invoke-WebRequest for robust downloading (PowerShell 3.0+)
             try {
                 Write-Host "[Envrnmt] Downloading Striim from $downloadUrl to $zipFilePath..."
-                Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing # -UseBasicParsing is for older servers, may not need
+                # Slow: Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing # -UseBasicParsing is for older servers, may not need
+                # Create an instance of HttpClient
+
+                $httpClient = New-Object System.Net.Http.HttpClient
+
+                # Send an asynchronous GET request to download the file
+                $response = $httpClient.GetAsync($downloadUrl).Result
+
+                # Ensure the response was successful
+                if ($response.IsSuccessStatusCode) {
+                    # Read the content of the response as a byte array
+                    $content = $response.Content.ReadAsByteArrayAsync().Result
+
+                    # Write the content to the specified file path
+                    [System.IO.File]::WriteAllBytes($zipFilePath, $content)
+                    Write-Host "[Envrnmt] Download complete!"
+                } else {
+                    Write-Host "[Envrnmt] Download failed. HTTP Status: $($response.StatusCode)"
+                }
+
+                # Dispose of the HttpClient instance
+                $httpClient.Dispose()
             }
             catch {
                 Write-Error "[Error] Download failed: $($_.Exception.Message)"
                 exit 1
             }
-
-            Write-Host "[Envrnmt] Download complete."
 
             # --- Extract the ZIP File ---
             try {
