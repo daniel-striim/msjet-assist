@@ -197,35 +197,88 @@ foreach ($folder in $tempFolders) {
 	}
 }
 
-# Determine Java Version
+# Get the Striim version by parsing the filename 'Platform-4.2.0.20.jar'
+$striimJarFile = Get-ChildItem -Path $striimLibPath -Filter "Platform-*.jar" | Select-Object -First 1
+if ($striimJarFile) {
+    # Extract the version number from the filename (e.g., 4.2.0.20)
+    $striimVersion = $striimJarFile.Name -replace '^Platform-(\d+\.\d+\.\d+\.\d+)\.jar$', '$1'
+    Write-Host "[Striim  ] Success: Found Striim version: $striimVersion"
+
+    # Extract the major version (e.g., 4 from 4.2.0.20)
+    $majorVersion = $striimVersion.Split('.')[0]
+    Write-Host "[Striim  ] Major version: $majorVersion"
+} else {
+    Write-Host "[Striim  ] Fail***: Could not find Striim JAR file."
+    exit
+}
+
+# Determine the required Java version based on Striim's major version
+if ($majorVersion -le 4) {
+    # Striim major version 4 or less requires Java 8
+    $requiredJavaVersion = "Java 8"
+    $javaDownloadUrl = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/8u422-b05/openlogic-openjdk-8u422-b05-windows-x64.msi"
+} elseif ($majorVersion -ge 5) {
+    # Striim major version 5 or greater requires Java 11
+    $requiredJavaVersion = "Java 11"
+    $javaDownloadUrl = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/11.0.10.9/openlogic-openjdk-11.0.10.9-windows-x64.msi"
+} else {
+    Write-Host "[Striim  ] Error: Unknown Striim version. Exiting..."
+    exit
+}
+
+# Check if Java is installed
 if (Get-Command java -ErrorAction SilentlyContinue) {
     $javaVersionOutput = java -version 2>&1 | Select-String -Pattern 'java version "(.*)"'
-	Write-Host "[Java   ] Success: Java version: $javaVersionOutput"
+    Write-Host "[Java   ] Success: Java version: $javaVersionOutput"
+
     if ($javaVersionOutput) {
         $javaVersion = $javaVersionOutput.Matches.Groups[1].Value
         if ($javaVersion -match "1\.8" -or $javaVersion -match "18\.0\.\d+\.\d+") {
             Write-Host "[Java   ] Success: Java 8 found."
+            if ($requiredJavaVersion -eq "Java 11") {
+                Write-Host "[Java   ] Java 8 detected, but Java 11 is required for Striim version $majorVersion. Please install Java 11."
+                # Offer to download Java 11 if Java 8 is detected but Java 11 is required
+                $downloadJavaChoice = Read-Host "  Download Java 11? (Y/N)"
+                if ($downloadJavaChoice.ToUpper() -eq "Y") {
+                    $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
+                    Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
+                    Write-Host "[Java   ] Success: Java 11 installer downloaded to $javaDownloadPath. Please install it."
+                }
+            }
+        } elseif ($javaVersion -match "11\.0") {
+            Write-Host "[Java   ] Success: Java 11 found."
+            if ($requiredJavaVersion -eq "Java 8") {
+                Write-Host "[Java   ] Java 11 detected, but Java 8 is required for Striim version $majorVersion. Please install Java 8."
+                # Offer to download Java 8 if Java 11 is detected but Java 8 is required
+                $downloadJavaChoice = Read-Host "  Download Java 8? (Y/N)"
+                if ($downloadJavaChoice.ToUpper() -eq "Y") {
+                    $javaDownloadUrl = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/8u422-b05/openlogic-openjdk-8u422-b05-windows-x64.msi"
+                    $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
+                    Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
+                    Write-Host "[Java   ] Success: Java 8 installer downloaded to $javaDownloadPath. Please install it."
+                }
+            }
         } else {
-            # Offer to download Java 8
-            $downloadJavaChoice = Read-Host "  Java 8 not found. Download it? (Y/N)"
+            Write-Host "[Java   ] Fail***: Unsupported Java version detected."
+            # Offer to download the required Java version
+            $downloadJavaChoice = Read-Host "  Download $requiredJavaVersion? (Y/N)"
             if ($downloadJavaChoice.ToUpper() -eq "Y") {
-                $javaDownloadUrl = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/8u422-b05/openlogic-openjdk-8u422-b05-windows-x64.msi"
-                $javaDownloadPath = -join ($downloadDir,  "\", $javaDownloadUrl.Split("/")[-1])
+                $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
                 Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
-                Write-Host "[Java   ] Success: Java 8 installer downloaded to $javaDownloadPath. Please install it."
+                Write-Host "[Java   ] Success: $requiredJavaVersion installer downloaded to $javaDownloadPath. Please install it."
             }
         }
     } else {
         Write-Host "[Java   ] Fail***: Could not determine Java version."
     }
 } else {
-    # Offer to download Java 8
-    $downloadJavaChoice = Read-Host "[Java   ] Java not found. Download Java 8? (Y/N)"
+    # Java is not installed, offer to download the required version
+    Write-Host "[Java   ] Java not found. Download $requiredJavaVersion? (Y/N)"
+    $downloadJavaChoice = Read-Host
     if ($downloadJavaChoice.ToUpper() -eq "Y") {
-        $javaDownloadUrl = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/8u422-b05/openlogic-openjdk-8u422-b05-windows-x64.msi"
-        $javaDownloadPath = -join ($downloadDir, "\", $javaDownloadUrl.Split("/")[-1])
+        $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
         Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
-        Write-Host "[Java   ] Fail***: Java 8 installer downloaded to $javaDownloadPath. Please install it."
+        Write-Host "[Java   ] Fail***: $requiredJavaVersion installer downloaded to $javaDownloadPath. Please install it."
     }
 }
 
