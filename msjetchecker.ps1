@@ -72,7 +72,7 @@ if (Test-Path $agentConfPath) {
             # https://striim-downloads.striim.com/Releases/5.0.6/Striim_Agent_5.0.6.tgz
             # https://striim-downloads.striim.com/Releases/5.0.6/Striim_5.0.6.zip
 
-            $downloadUrl = "https://striim-downloads.striim.com/Releases/$striimVersion/Striim_$urlAddAgent$striimVersion.zip"  #Example
+            $downloadUrl = "https://striim-downloads.striim.com/Releases/$striimVersion/Striim_$urlAddAgent$striimVersion.zip"
 
             Write-Host "[Envrnmt] Success: Striim Download path set to: $downloadUrl"
 
