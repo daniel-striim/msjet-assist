@@ -37,7 +37,7 @@ if (Test-Path $agentConfPath) {
                 $nodeType = $nodeType.ToUpper()
             }
 
-            $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6):"
+            $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6)"
 
             Write-Host "Valid version: $striimVersion" # Added for verification
 
@@ -50,7 +50,7 @@ if (Test-Path $agentConfPath) {
                 $urlAddAgent = "Agent_"
             }
 
-            $striimInstallPathInput = Read-Host "[Envrnmt]  Enter Striim installation path (Default: '$defaultStriimInstallPath'):"
+            $striimInstallPathInput = Read-Host "[Envrnmt]  Enter Striim installation path (Default: '$defaultStriimInstallPath')"
             if ($striimInstallPathInput -ne "") {
                 $striimInstallPath = $striimInstallPathInput
                 $defaultStriimExtractPath = $striimInstallPath
@@ -128,7 +128,7 @@ if (Test-Path $agentConfPath) {
             # --- Extract the ZIP File ---
             try {
                 Write-Host "[Envrnmt] Extracting Striim to $striimInstallPath..."
-                Expand-Archive -Path $zipFilePath -DestinationPath $striimInstallPath -Force -ErrorAction Stop
+                Expand-Archive -Path $zipFilePath -DestinationPath $defaultStriimExtractPath -Force -ErrorAction Stop
             }
             catch {
                 Write-Error "[Error] Extraction failed: $($_.Exception.Message)"
