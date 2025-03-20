@@ -37,10 +37,6 @@ if (Test-Path $agentConfPath) {
                 $nodeType = $nodeType.ToUpper()
             }
 
-            if ($nodeType -eq "A") {
-                $urlAddAgent = "Agent_"
-            }
-
             $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6):"
 
             Write-Host "Valid version: $striimVersion" # Added for verification
@@ -49,6 +45,7 @@ if (Test-Path $agentConfPath) {
                 $defaultStriimInstallPath = "C:\striim"
             } else {
                 $defaultStriimInstallPath = "C:\striim\agent"
+                $urlAddAgent = "Agent_"
             }
 
             $striimInstallPathInput = Read-Host "[Envrnmt]  Enter Striim installation path (Default: '$defaultStriimInstallPath'):"
