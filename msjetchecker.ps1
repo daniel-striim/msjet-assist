@@ -43,14 +43,17 @@ if (Test-Path $agentConfPath) {
 
             if ($nodeType -eq "N") {
                 $defaultStriimInstallPath = "C:\striim"
+                $defaultStriimExtractPath = "C:\"
             } else {
-                $defaultStriimInstallPath = "C:\striim\agent"
+                $defaultStriimInstallPath = "C:\striim\Agent"
+                $defaultStriimExtractPath = "C:\striim\"
                 $urlAddAgent = "Agent_"
             }
 
             $striimInstallPathInput = Read-Host "[Envrnmt]  Enter Striim installation path (Default: '$defaultStriimInstallPath'):"
             if ($striimInstallPathInput -ne "") {
                 $striimInstallPath = $striimInstallPathInput
+                $defaultStriimExtractPath = $striimInstallPath
             } else {
                 $striimInstallPath = $defaultStriimInstallPath
             }
