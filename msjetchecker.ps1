@@ -292,21 +292,24 @@ if ($nodeType -eq "N") {
                     $propValue = $matches[1]
 
                     if ($line.StartsWith("#")) {
+                        # Property is commented out
                         Write-Host "[Config ] '$prop' is commented out. Would you like to uncomment it and set a value? (y/n)"
                         $response = Read-Host
                         if ($response -eq "y") {
                             $newValue = Read-Host "Enter a value for $prop"
-                            $startUpPropsLines[$lineIndex] = "$prop=$newValue"
+                            $startUpPropsLines[$lineIndex] = "$prop=$newValue"  # Update the line
                             Write-Host "[Config ] Updated '$prop' with value: $newValue"
                         } else {
                             Write-Host "[Config ] '$prop' remains commented out."
                         }
                     } elseif ($propValue -eq "") {
+                        # Property is empty, ask the user for a value
                         Write-Host "[Config ] '$prop' is empty. Please provide a value."
                         $newValue = Read-Host "Enter a value for $prop"
-                        $startUpPropsLines[$lineIndex] = "$prop=$newValue"
+                        $startUpPropsLines[$lineIndex] = "$prop=$newValue"  # Update the line
                         Write-Host "[Config ] Updated '$prop' with value: $newValue"
                     } else {
+                        # Property has a valid value
                         Write-Host "[Config ] Success: '$prop' found in startUp.properties with value: $propValue"
                         $propsFound[$prop] = $true
                     }
@@ -314,6 +317,7 @@ if ($nodeType -eq "N") {
                 }
             }
         }
+
 
         # Prompt for any missing required properties
         foreach ($prop in $requiredProps) {
