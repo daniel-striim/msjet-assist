@@ -35,16 +35,12 @@ if (Test-Path $agentConfPath) {
                 Write-Host "Invalid input. Please enter 'N' for Node or 'A' for Agent."
                 $nodeType = Read-Host "[Envrnmt]  Do you want to install Striim Node (N) or Agent (A)? (Enter 'N' or 'A')"
                 $nodeType = $nodeType.ToUpper()
-                $urlAddAgent = "Agent_"
+                if ($nodeType -eq "A") {
+                    $urlAddAgent = "Agent_"
+                }
             }
 
             $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6):"
-
-            # Validate Version Input (Now supports 3 or 4 parts, and optional letter at the end)
-            while ($striimVersion -notmatch "^\d+\.\d+\.\d+(\.\d+)?([A-Za-z])?$") {
-                Write-Host "Invalid version format. Please use the format X.X.X, X.X.X.X, or X.X.X.XA (e.g., 4.2.0, 4.2.0.20, or 4.2.0.20A)."
-                $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version (e.g., 4.2.0.20 or 5.0.6):"
-            }
 
             Write-Host "Valid version: $striimVersion" # Added for verification
 
