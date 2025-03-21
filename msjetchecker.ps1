@@ -1,6 +1,34 @@
+# Display startup summary with checks and admin requirements
+Write-Host "`nStarting Striim Configuration Check..."
+Write-Host "------------------------------------------"
+Write-Host "[Checks Summary] The following validations will occur:"
+Write-Host "  • [System]        Verify ≥15GB free space on C: drive"
+Write-Host "  • [Node Type]     Auto-detect Agent/Node or prompt for selection"
+Write-Host "  • [Striim Setup]  Install Striim if missing"
+Write-Host "  • [Config Files]  Validate agent.conf/startUp.properties settings"
+Write-Host "  • [System PATH]   Add Striim lib directory to system PATH (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
+Write-Host "  • [Dependencies]  Verify DLLs (icudt72.dll, icuuc72.dll, MSSQLNative.dll) or download them"
+Write-Host "  • [Java Check]    Ensure compatible Java version installed. Offer download if missing"
+Write-Host "  • [Security]      Setup Integrated Security sqljdbc_auth.dll (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
+Write-Host "  • [Patches]       Apply critical fixes for Striim v4.2.0.20 (if applicable)"
+Write-Host "  • [Service]       Configure Striim as Windows Service (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
+Write-Host "------------------------------------------"
+Read-Host "`nPress Enter to continue or Ctrl+C to abort..."
+
 # Define default values
 $striimInstallPath = Get-Location
 $downloadDir = -join ($striimInstallPath, "\downloads")
+
+# Get the free space of the C: drive in GB
+$freeSpaceGB = (Get-PSDrive -Name C).Used / 1GB
+
+# Check if the free space is less than 15 GB
+if ($freeSpaceGB -lt 15) {
+    Write-Host "[Envrnmt]       Insufficient disk space on C: drive. At least 15 GB of free space is required."
+    exit 1  # Stop the script and indicate failure
+} else {
+    Write-Host "[Envrnmt]       Sufficient disk space available on C: drive."
+}
 
 # Step 1: Create downloads folder if it doesn't exist
 if (-not (Test-Path $downloadDir)) {
@@ -37,10 +65,6 @@ if (Test-Path $agentConfPath) {
                 $nodeType = $nodeType.ToUpper()
             }
 
-            $striimVersion = Read-Host "[Envrnmt]  Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6)"
-
-            Write-Host "Valid version: $striimVersion" # Added for verification
-
             if ($nodeType -eq "N") {
                 $defaultStriimInstallPath = "C:\striim"
                 $defaultStriimExtractPath = "C:\"
@@ -49,6 +73,34 @@ if (Test-Path $agentConfPath) {
                 $defaultStriimExtractPath = "C:\striim\"
                 $urlAddAgent = "Agent_"
             }
+
+            $striimVersion = ""
+
+            $downloadUrl = ""
+
+            do {
+                $striimVersion = Read-Host "[Envrnmt] Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6)"
+                Write-Host "[Envrnmt] Valid version detected: $striimVersion" #
+
+                $downloadUrl = "https://striim-downloads.striim.com/Releases/$striimVersion/Striim_$urlAddAgent$striimVersion.zip"
+
+                Write-Host "[Envrnmt] Checking download path: $downloadUrl"
+
+                try {
+                    # Check URL existence using HEAD request without downloading
+                    Invoke-WebRequest -Uri $downloadUrl -Method Head -UseBasicParsing -ErrorAction Stop | Out-Null
+
+                    Write-Host "[Envrnmt] Success! Striim Download path is valid: $downloadUrl"
+                    $valid = $true  # Exit loop if URL exists
+                }
+                catch {
+                    Write-Warning "[Envrnmt] INVALID version detected: $striimVersion"
+                    $valid = $false
+                }
+
+            } while (-not $valid)
+
+            Write-Host "[Envrnmt]  Striim will be downloaded from: $downloadUrl"
 
             $striimInstallPathInput = Read-Host "[Envrnmt]  Enter Striim installation path (Default: '$defaultStriimInstallPath')"
             if ($striimInstallPathInput -ne "") {
@@ -75,12 +127,6 @@ if (Test-Path $agentConfPath) {
             # https://striim-downloads.striim.com/Releases/5.0.6/Striim_Agent_5.0.6.tgz
             # https://striim-downloads.striim.com/Releases/5.0.6/Striim_5.0.6.zip
 
-            $downloadUrl = "https://striim-downloads.striim.com/Releases/$striimVersion/Striim_$urlAddAgent$striimVersion.zip"
-
-            Write-Host "[Envrnmt] Success: Striim Download path set to: $downloadUrl"
-
-            Write-Host "[Envrnmt]  Striim will be downloaded from: $downloadUrl"
-
             if (!(Test-Path -Path $striimInstallPath -PathType Container)) {
                 try {
                     New-Item -ItemType Directory -Path $striimInstallPath -Force -ErrorAction Stop
@@ -92,40 +138,42 @@ if (Test-Path $agentConfPath) {
                 }
             }
 
+            # Check if the ZIP file already exists before downloading
             $zipFilePath = Join-Path -Path $striimInstallPath -ChildPath "Striim_$urlAddAgent$striimVersion.zip"
-
-            # Use Invoke-WebRequest for robust downloading (PowerShell 3.0+)
-            try {
+            if (Test-Path -Path $zipFilePath) {
+                Write-Host "[Envrnmt] ZIP file already exists: $zipFilePath. Skipping download."
+            } else {
                 Write-Host "[Envrnmt] Downloading Striim from $downloadUrl to $zipFilePath... (note: this may take a few minutes depending on your internet speed; there is no progress bar)"
-                # Slow: Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing # -UseBasicParsing is for older servers, may not need
-                # Create an instance of HttpClient
 
-                $httpClient = New-Object System.Net.Http.HttpClient
+                try {
+                    # Create an instance of HttpClient
+                    $httpClient = New-Object System.Net.Http.HttpClient
 
-                # Send an asynchronous GET request to download the file
-                $response = $httpClient.GetAsync($downloadUrl).Result
+                    # Send an asynchronous GET request to download the file
+                    $response = $httpClient.GetAsync($downloadUrl).Result
 
-                # Ensure the response was successful
-                if ($response.IsSuccessStatusCode) {
-                    # Read the content of the response as a byte array
-                    $content = $response.Content.ReadAsByteArrayAsync().Result
+                    # Ensure the response was successful
+                    if ($response.IsSuccessStatusCode) {
+                        # Read the content of the response as a byte array
+                        $content = $response.Content.ReadAsByteArrayAsync().Result
 
-                    # Write the content to the specified file path
-                    [System.IO.File]::WriteAllBytes($zipFilePath, $content)
-                    Write-Host "[Envrnmt] Download complete!"
-                } else {
-                    Write-Host "[Envrnmt] Download failed. HTTP Status: $($response.StatusCode)"
-                    Write-Host "[Envrnmt] Downloading using slower method..."
-                    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing
-                    Write-Host "[Envrnmt] Download complete!"
+                        # Write the content to the specified file path
+                        [System.IO.File]::WriteAllBytes($zipFilePath, $content)
+                        Write-Host "[Envrnmt] Download complete!"
+                    } else {
+                        Write-Host "[Envrnmt] Download failed. HTTP Status: $($response.StatusCode)"
+                        Write-Host "[Envrnmt] Downloading using slower method..."
+                        Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing
+                        Write-Host "[Envrnmt] Download complete!"
+                    }
+
+                    # Dispose of the HttpClient instance
+                    $httpClient.Dispose()
                 }
-
-                # Dispose of the HttpClient instance
-                $httpClient.Dispose()
-            }
-            catch {
-                Write-Error "[Error] Download failed: $($_.Exception.Message)"
-                exit 1
+                catch {
+                    Write-Error "[Error] Download failed: $($_.Exception.Message)"
+                    exit 1
+                }
             }
 
             # --- Extract the ZIP File ---
@@ -147,17 +195,9 @@ if (Test-Path $agentConfPath) {
                 exit 1
             }
 
-            # --- Cleanup ---
             # Remove the downloaded ZIP file after successful extraction.
-            try {
-                Remove-Item -Path $zipFilePath -Force -ErrorAction Stop
-                Write-Host "[Envrnmt] Removed temporary ZIP file: $zipFilePath"
-            }
-            catch {
-                Write-Warning "[Warning] Failed to remove ZIP file: $($_.Exception.Message)"
-                #  Not a critical error, so don't exit. Just warn.
-            }
-
+            Write-Host "[Service]   Striim Install saved here: $zipFilePath"
+            Write-Host "[Service]   Striim Install         *** Clean up manually if required ***"
 
         } else {
             # If neither file is found, ask the user
@@ -347,6 +387,7 @@ if ($env:Path -split ";" -contains $striimLibPath) {
     Write-Host "[Config ] Success: Striim lib directory found in PATH."
 } else {
     Write-Host "[Config ] Fail***: Striim lib directory not found in PATH."
+    Write-Host "[Config ]  (Requires Running Powershell as Administrator) -"
 	$addToPathChoice = Read-Host "[Config ]  Do you want to add it to the system PATH? (Y/N)"
     if ($addToPathChoice.ToUpper() -eq "Y") {
         # Add Striim lib directory to PATH
@@ -436,7 +477,7 @@ if ($majorVersion -le 4) {
 } elseif ($majorVersion -ge 5) {
     # Striim major version 5 or greater requires Java 11
     $requiredJavaVersion = "Java 11"
-    $javaDownloadUrl = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/11.0.10.9/openlogic-openjdk-11.0.10.9-windows-x64.msi"
+    $javaDownloadUrl = "https://aka.ms/download-jdk/microsoft-jdk-11.0.26-windows-x64.msi"
 } else {
     Write-Host "[Striim  ] Error: Unknown Striim version. Exiting..."
     exit
