@@ -80,7 +80,7 @@ if (Test-Path $agentConfPath) {
 
             do {
                 $striimVersion = Read-Host "[Envrnmt] Enter the Striim version you want to install (e.g., 4.2.0.20 or 5.0.6)"
-                Write-Host "[Envrnmt] Valid version detected: $striimVersion" #
+                Write-Host "[Envrnmt] Valid version detected: $striimVersion"
 
                 $downloadUrl = "https://striim-downloads.striim.com/Releases/$striimVersion/Striim_$urlAddAgent$striimVersion.zip"
 
