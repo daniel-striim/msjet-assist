@@ -20,7 +20,7 @@ $striimInstallPath = Get-Location
 $downloadDir = -join ($striimInstallPath, "\downloads")
 
 # Get the free space of the C: drive in GB
-$freeSpaceGB = (Get-PSDrive -Name C).Used / 1GB
+$freeSpaceGB = (Get-PSDrive -Name C).Free / 1GB
 
 # Check if the free space is less than 15 GB
 if ($freeSpaceGB -lt 15) {
