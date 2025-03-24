@@ -43,7 +43,7 @@ function Download-FileIfNotExists {
 
     if (Test-Path -Path $DownloadPath) {
         Write-Host "[Download] File already exists: $DownloadPath"
-        return  # Exit the function, don't download
+        return $true # Exit the function, don't download
     }
 
     Write-Host "[Download] Downloading from $Uri to $DownloadPath..."
@@ -596,9 +596,32 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
                 $downloadJavaChoice = Read-Host "  Download Java 11? (Y/N)"
                 if ($downloadJavaChoice.ToUpper() -eq "Y") {
                     $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
-                    Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
+                    $downloadSuccess = Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
                     # Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
                     # Write-Host "[Java   ] Success: Java 11 installer downloaded to $javaDownloadPath. Please install it."
+                    if ($downloadSuccess) {
+                        # Ask the user if they want to run the installer
+                        $runInstallerChoice = Read-Host "Java installer downloaded to $javaDownloadPath.  Run installer now (as administrator)? (Y/N)"
+
+                        if ($runInstallerChoice.ToUpper() -eq "Y") {
+                            if(Test-IsAdmin){
+                                #Already admin
+                                Start-Process -FilePath $javaDownloadPath
+                            }
+                            else{
+                                #Run as Admin
+                                 $exitCode = Invoke-AsAdmin -ArgumentList "Start-Process -FilePath '$javaDownloadPath'" -WorkingDirectory $downloadDir
+                                 if ($exitCode -eq 0) {
+                                    Write-Host "Installer launched successfully."
+                                 }
+                                 else{
+                                    Write-Host "Installer launch failed"
+                                 }
+                            }
+                        }
+                    } else {
+                        Write-Host "Java download failed.  Cannot proceed with installation." -ForegroundColor Red
+                    }
                 }
             }
         } elseif ($javaVersion -match "11\.0") {
@@ -610,9 +633,32 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
                 if ($downloadJavaChoice.ToUpper() -eq "Y") {
                     $javaDownloadUrl = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/8u422-b05/openlogic-openjdk-8u422-b05-windows-x64.msi"
                     $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
-                    Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
+                    $downloadSuccess = Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
                     #Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
                     #Write-Host "[Java   ] Success: Java 8 installer downloaded to $javaDownloadPath. Please install it."
+                    if ($downloadSuccess) {
+                        # Ask the user if they want to run the installer
+                        $runInstallerChoice = Read-Host "Java installer downloaded to $javaDownloadPath.  Run installer now (as administrator)? (Y/N)"
+
+                        if ($runInstallerChoice.ToUpper() -eq "Y") {
+                            if(Test-IsAdmin){
+                                #Already admin
+                                Start-Process -FilePath $javaDownloadPath
+                            }
+                            else{
+                                #Run as Admin
+                                 $exitCode = Invoke-AsAdmin -ArgumentList "Start-Process -FilePath '$javaDownloadPath'" -WorkingDirectory $downloadDir
+                                 if ($exitCode -eq 0) {
+                                    Write-Host "Installer launched successfully."
+                                 }
+                                 else{
+                                    Write-Host "Installer launch failed"
+                                 }
+                            }
+                        }
+                    } else {
+                        Write-Host "Java download failed.  Cannot proceed with installation." -ForegroundColor Red
+                    }
                 }
             }
         } else {
@@ -621,9 +667,32 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
             $downloadJavaChoice = Read-Host "  Download $requiredJavaVersion? (Y/N)"
             if ($downloadJavaChoice.ToUpper() -eq "Y") {
                 $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
-                Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
+                $downloadSuccess = Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
                 #Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
                 #Write-Host "[Java   ] Success: $requiredJavaVersion installer downloaded to $javaDownloadPath. Please install it."
+                if ($downloadSuccess) {
+                    # Ask the user if they want to run the installer
+                    $runInstallerChoice = Read-Host "Java installer downloaded to $javaDownloadPath.  Run installer now (as administrator)? (Y/N)"
+
+                    if ($runInstallerChoice.ToUpper() -eq "Y") {
+                        if(Test-IsAdmin){
+                            #Already admin
+                            Start-Process -FilePath $javaDownloadPath
+                        }
+                        else{
+                            #Run as Admin
+                             $exitCode = Invoke-AsAdmin -ArgumentList "Start-Process -FilePath '$javaDownloadPath'" -WorkingDirectory $downloadDir
+                             if ($exitCode -eq 0) {
+                                Write-Host "Installer launched successfully."
+                             }
+                             else{
+                                Write-Host "Installer launch failed"
+                             }
+                        }
+                    }
+                } else {
+                    Write-Host "Java download failed.  Cannot proceed with installation." -ForegroundColor Red
+                }
             }
         }
     } else {
@@ -635,9 +704,32 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
     $downloadJavaChoice = Read-Host
     if ($downloadJavaChoice.ToUpper() -eq "Y") {
         $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
-        Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
+        $downloadSuccess = Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
         #Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
         #Write-Host "[Java   ] Fail***: $requiredJavaVersion installer downloaded to $javaDownloadPath. Please install it."
+        if ($downloadSuccess) {
+            # Ask the user if they want to run the installer
+            $runInstallerChoice = Read-Host "Java installer downloaded to $javaDownloadPath.  Run installer now (as administrator)? (Y/N)"
+
+            if ($runInstallerChoice.ToUpper() -eq "Y") {
+                if(Test-IsAdmin){
+                    #Already admin
+                    Start-Process -FilePath $javaDownloadPath
+                }
+                else{
+                    #Run as Admin
+                     $exitCode = Invoke-AsAdmin -ArgumentList "Start-Process -FilePath '$javaDownloadPath'" -WorkingDirectory $downloadDir
+                     if ($exitCode -eq 0) {
+                        Write-Host "Installer launched successfully."
+                     }
+                     else{
+                        Write-Host "Installer launch failed"
+                     }
+                }
+            }
+        } else {
+            Write-Host "Java download failed.  Cannot proceed with installation." -ForegroundColor Red
+        }
     }
 }
 
@@ -792,6 +884,7 @@ function DownloadAndInstallSoftware {
     )
 
     $downloadChoice = Read-Host "[Softwre]  Do you want to download and install $softwareName? (Y/N)"
+
     if ($downloadChoice.ToUpper() -eq "Y") {
 		[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -802,11 +895,34 @@ function DownloadAndInstallSoftware {
 			$downloadPath = -join ($downloadDir, "\msoledbsql.msi" )
 		}
 		Write-Host "[Softwre] downloadPath $downloadPath"
-        $response = Invoke-WebRequest -Uri $downloadUrl -MaximumRedirection 5 -OutFile $downloadPath # Allow up to 5 redirections
 
-		Write-Host "[Softwre] downloadUrl $downloadUrl"
+        $downloadResult = Download-FileIfNotExists -Uri $downloadUrl -DownloadPath $downloadPath
 
-        Write-Host "[Softwre] Success: $softwareName installer downloaded to $downloadPath. Please run it to install."
+		if ($downloadResult)
+        {
+            Write-Host "[Softwre] Success: $softwareName installer downloaded to $downloadPath. "
+            # Prompt to run as administrator
+            $runAsAdminChoice = Read-Host "Run the installer as administrator now? (Y/N)"
+            if ($runAsAdminChoice.ToUpper() -eq "Y") {
+
+                if (Test-IsAdmin) {
+                    # Already running as admin
+                    Start-Process -FilePath $downloadPath
+                }
+                else{
+                    # Run as administrator using Invoke-AsAdmin
+                    $command = "Start-Process -FilePath '$downloadPath'"
+                    $exitCode = Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir
+
+                    if ($exitCode -eq 0) {
+                        Write-Host "[Softwre] Installer launched successfully (elevated)."
+                    } else {
+                        Write-Host "[Softwre] Error: Failed to launch installer (elevated). Exit code: $exitCode" -ForegroundColor Red
+                    }
+                }
+            }
+        }
+
     }
 }
 
