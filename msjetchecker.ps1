@@ -162,7 +162,7 @@ if (Test-Path $agentConfPath) {
                         Write-Host "[Envrnmt] Download complete!"
                     } else {
                         Write-Host "[Envrnmt] Download failed. HTTP Status: $($response.StatusCode)"
-                        Write-Host "[Envrnmt] Downloading using slower method..."
+                        Write-Host "[Envrnmt] Downloading using slower method... this may take a while..."
                         Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing
                         Write-Host "[Envrnmt] Download complete!"
                     }
@@ -172,7 +172,9 @@ if (Test-Path $agentConfPath) {
                 }
                 catch {
                     Write-Error "[Error] Download failed: $($_.Exception.Message)"
-                    exit 1
+                    Write-Host "[Envrnmt] Downloading using slower method... this may take a while..."
+                    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing
+                    Write-Host "[Envrnmt] Download complete!"
                 }
             }
 
@@ -380,24 +382,70 @@ if ($nodeType -eq "N") {
     }
 }
 
+# Function to check if the script is running as administrator
+function Test-IsAdmin {
+  ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Function to execute a command as administrator in a new PowerShell process
+function Invoke-AsAdmin {
+  param(
+    [string]$ArgumentList
+  )
+
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = "powershell.exe"
+  $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -Command "' + $ArgumentList + '"'  # Single quotes
+  $psi.Verb = "RunAs"
+  $psi.WorkingDirectory = $PWD
+
+  $process = [System.Diagnostics.Process]::Start($psi)
+  $process.WaitForExit()
+  return $process.ExitCode
+}
+
 # Check if Striim lib directory is in PATH
-$striimLibPath = -join ($striimInstallPath, "\lib")
+$striimLibPath = Join-Path $striimInstallPath "\lib" # Use Join-Path, it's more reliable than string concatenation
 Write-Host "[Config ]       -> Striim Lib Path set to: $striimLibPath"
+
 if ($env:Path -split ";" -contains $striimLibPath) {
     Write-Host "[Config ] Success: Striim lib directory found in PATH."
 } else {
     Write-Host "[Config ] Fail***: Striim lib directory not found in PATH."
     Write-Host "[Config ]  (Requires Running Powershell as Administrator) -"
-	$addToPathChoice = Read-Host "[Config ]  Do you want to add it to the system PATH? (Y/N)"
+	  $addToPathChoice = Read-Host "[Config ]  Do you want to add it to the system PATH? (Y/N)"
     if ($addToPathChoice.ToUpper() -eq "Y") {
-        # Add Striim lib directory to PATH
-        $newPath = $env:Path + ";" + $striimLibPath
-        [Environment]::SetEnvironmentVariable("Path", $newPath, "Machine") # Set for all users
+        # --- ELEVATED SECTION (within the if) ---
+        if (Test-IsAdmin) {
+            # We are already running as admin, so we can directly modify the environment variable.
+            $newPath = $env:Path + ";" + $striimLibPath
+            [Environment]::SetEnvironmentVariable("Path", $newPath, "Machine") # Set for all users
+            Write-Host "[Config ] Success: Striim lib directory added to PATH (already elevated)."
 
-        # Refresh the current session's environment variables
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        } else {
+            # Not running as admin, so re-launch this part as admin
+            Write-Host "[Config ]  Elevating permissions to add Striim to PATH..."
 
-        Write-Host "[Config ] Success: Striim lib directory added to PATH."
+            # Build the command to execute as admin.  This needs to be a *single* string.
+            # We use single quotes (') around the inner command to avoid variable expansion *here*.
+            # We want the variables expanded *inside* the elevated process.
+            $commandToRunAsAdmin = "[Environment]::SetEnvironmentVariable('Path', ((Get-Item Env:Path).Value + ';$striimLibPath'), 'Machine')"
+
+            # Call Invoke-AsAdmin with the command.
+            $exitCode = Invoke-AsAdmin -ArgumentList $commandToRunAsAdmin
+
+            if ($exitCode -eq 0) {
+                Write-Host "[Config ] Success: Striim lib directory added to PATH (elevated)."
+            } else {
+                Write-Host "[Config ] Error: Failed to add Striim lib directory to PATH (exit code: $exitCode)." -ForegroundColor Red
+            }
+        }
+        # --- END ELEVATED SECTION ---
+
+        # Refresh the current session's environment variables *only if running as admin*.  Otherwise, it won't see the changes.
+        if(Test-IsAdmin){
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        }
     }
 }
 
@@ -539,6 +587,7 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
     }
 }
 
+# --- Integrated Security Section ---
 # Determine if Integrated Security is needed
 $sqljdbcAuthDllPath = "C:\Windows\System32\sqljdbc_auth.dll"
 if (Test-Path $sqljdbcAuthDllPath) {
@@ -548,21 +597,51 @@ if (Test-Path $sqljdbcAuthDllPath) {
     $useIntegratedSecurity = Read-Host "[Int Sec] Plan to use Integrated Security? (Y/N)"
     if ($useIntegratedSecurity.ToUpper() -eq "Y") {
         # Check if it exists in /lib
-        if (Test-Path "$striimLibPath\sqljdbc_auth.dll") {
+        $sourceDllPath = Join-Path $striimLibPath "sqljdbc_auth.dll"
+        if (Test-Path $sourceDllPath) {
             $copyChoice = Read-Host "[Int Sec] Integrated Security:  sqljdbc_auth.dll found in $striimLibPath. Copy it to C:\Windows\System32? (Y/N)"
             if ($copyChoice.ToUpper() -eq "Y") {
-                Copy-Item "$striimLibPath\sqljdbc_auth.dll" $sqljdbcAuthDllPath
-                Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll copied to C:\Windows\System32"
+                # --- ELEVATED COPY ---
+                if (Test-IsAdmin) {
+                    Copy-Item -Path $sourceDllPath -Destination $sqljdbcAuthDllPath -Force
+                    Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll copied to C:\Windows\System32 (already elevated)"
+                } else {
+                    $copyCommand = "Copy-Item -Path '$sourceDllPath' -Destination '$sqljdbcAuthDllPath' -Force"
+                    $exitCode = Invoke-AsAdmin -ArgumentList $copyCommand
+                    if ($exitCode -eq 0) {
+                        Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll copied to C:\Windows\System32 (elevated)"
+                    } else {
+                        Write-Host "[Int Sec] Error: Failed to copy sqljdbc_auth.dll (exit code: $exitCode)." -ForegroundColor Red
+                    }
+                }
+                # --- END ELEVATED COPY ---
             }
         } else {
             # Offer to download
             $downloadChoice = Read-Host "[Int Sec] Integrated Security:  sqljdbc_auth.dll not found. Download it? (Y/N)"
             if ($downloadChoice.ToUpper() -eq "Y") {
                 $downloadUrl = "https://github.com/daniel-striim/StriimQueryAutoLoader/raw/main/MSJet/sqljdbc_auth.dll" # Update with the correct URL if needed
-                $downloadPath = -join ($downloadDir, "\", $downloadUrl.Split("/")[-1])
-                Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath
-                Copy-Item $downloadPath $sqljdbcAuthDllPath
-                Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll downloaded and copied to C:\Windows\System32"
+                $downloadPath = Join-Path $downloadDir "sqljdbc_auth.dll"
+                try {
+                    Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadPath -ErrorAction Stop  # Use -ErrorAction Stop for proper error handling
+                    # --- ELEVATED COPY (after download) ---
+                    if (Test-IsAdmin) {
+                        Copy-Item -Path $downloadPath -Destination $sqljdbcAuthDllPath -Force
+                        Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll downloaded and copied to C:\Windows\System32 (already elevated)"
+                    } else {
+                        $copyCommand = "Copy-Item -Path '$downloadPath' -Destination '$sqljdbcAuthDllPath' -Force"
+                         $exitCode = Invoke-AsAdmin -ArgumentList $copyCommand
+                        if ($exitCode -eq 0) {
+                            Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll downloaded and copied to C:\Windows\System32 (elevated)"
+                        } else {
+                             Write-Host "[Int Sec] Error: Failed to copy downloaded sqljdbc_auth.dll (exit code: $exitCode)." -ForegroundColor Red
+                        }
+                    }
+                    # --- END ELEVATED COPY ---
+
+                } catch {
+                    Write-Host "[Int Sec] Error: Failed to download sqljdbc_auth.dll. $($_.Exception.Message)" -ForegroundColor Red
+                }
             }
         }
     }
@@ -767,8 +846,26 @@ if (Get-Service $serviceName -ErrorAction SilentlyContinue) {
 				$setupScriptPath = Join-Path $serviceConfigFolder "setupWindowsService.ps1"
 			}
 
+			Write-Host "[Service] Runing the service setup located here: $setupScriptPath"
 
-			Write-Host "[Service] Run the service setup located here: $setupScriptPath"
+            # --- ELEVATED SCRIPT EXECUTION ---
+            if (Test-IsAdmin) {
+                # Already running as admin, execute directly
+                Write-Host "[Service] Running service setup script (already elevated): $setupScriptPath"
+                & $setupScriptPath  # Use the call operator (&) to execute the script
+            } else {
+                # Not running as admin, elevate
+                Write-Host "[Service] Elevating permissions to run service setup script: $setupScriptPath"
+                # Construct the command string.  Note the use of single quotes.
+                $scriptExecutionCommand = "& '$setupScriptPath'"
+                $exitCode = Invoke-AsAdmin -ArgumentList $scriptExecutionCommand
+
+                if ($exitCode -eq 0) {
+                    Write-Host "[Service] Service setup script completed successfully (elevated)."
+                } else {
+                    Write-Host "[Service] Error: Service setup script failed (exit code: $exitCode)." -ForegroundColor Red
+                }
+            }
 		}
 
 		Write-Host "[Service] * Note : If your Striim service is using Integrated Security, you may need to change the user the service runs as."
