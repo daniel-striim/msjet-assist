@@ -35,6 +35,99 @@ if (-not (Test-Path $downloadDir)) {
     New-Item -ItemType Directory -Force -Path $downloadDir
 }
 
+function Download-FileIfNotExists {
+    param(
+        [string]$Uri,
+        [string]$DownloadPath
+    )
+
+    if (Test-Path -Path $DownloadPath) {
+        Write-Host "[Download] File already exists: $DownloadPath"
+        return  # Exit the function, don't download
+    }
+
+    Write-Host "[Download] Downloading from $Uri to $DownloadPath..."
+
+    try {
+        # Try using HttpClient (faster)
+        $httpClient = New-Object System.Net.Http.HttpClient
+
+        # Set a reasonable timeout (e.g., 60 seconds) - IMPORTANT!
+        $httpClient.Timeout = New-TimeSpan -Seconds 60
+
+        $response = $httpClient.GetAsync($Uri).Result
+
+        if ($response.IsSuccessStatusCode) {
+            $content = $response.Content.ReadAsByteArrayAsync().Result
+            [System.IO.File]::WriteAllBytes($DownloadPath, $content)
+            Write-Host "[Download] Success: File downloaded using HttpClient."
+        } else {
+            Write-Host "[Download] HttpClient download failed. HTTP Status: $($response.StatusCode)" -ForegroundColor Yellow
+            throw "HttpClient failed with status code: $($response.StatusCode)" # Throw an exception to trigger the catch block
+        }
+
+        $httpClient.Dispose()
+
+    }
+    catch {
+        Write-Host "[Download] Attempting fallback download using Invoke-WebRequest (slower)..." -ForegroundColor Yellow
+        try {
+            # Fallback to Invoke-WebRequest (slower, but more compatible)
+            Invoke-WebRequest -Uri $Uri -OutFile $DownloadPath -ErrorAction Stop -UseBasicParsing
+            Write-Host "[Download] Success: File downloaded using Invoke-WebRequest."
+        }
+        catch {
+            Write-Host "[Download] Error: Failed to download file using both methods. $($_.Exception.Message)" -ForegroundColor Red
+            #  Critical error:  Could not download with either method.
+            #  Consider exiting the script here, or taking other drastic action.
+            return $false  # Indicate failure
+        }
+    }
+    finally {
+        #  Dispose of HttpClient *always*, even if there's an exception
+        if ($httpClient) {
+            $httpClient.Dispose()
+        }
+    }
+    return $true #Indicate Success
+}
+
+
+# Function to check if the script is running as administrator
+function Test-IsAdmin {
+  ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Function to execute a command as administrator in a new PowerShell process
+function Invoke-AsAdmin {
+  param(
+    [string]$ArgumentList,
+    [string]$WorkingDirectory
+  )
+
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = "powershell.exe"
+  #$psi.Arguments = '-NoExit -NoProfile -ExecutionPolicy Bypass -Command "' + $ArgumentList + '"'  # Single quotes
+  $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -Command "' + $ArgumentList + '"'  # Single quotes
+  $psi.Verb = "RunAs"
+  $psi.WorkingDirectory = $WorkingDirectory
+  #$psi.RedirectStandardOutput = $true
+  #$psi.RedirectStandardError = $true
+  #$psi.UseShellExecute = $false
+
+  $process = [System.Diagnostics.Process]::Start($psi)
+
+  #$stdOut = $process.StandardOutput.ReadToEnd()
+  #$stdErr = $process.StandardError.ReadToEnd()
+
+  $process.WaitForExit()
+
+  #$stdOut | Out-File -FilePath "$env:TEMP\setup_stdout.txt" -Append -Encoding UTF8
+  #$stdErr | Out-File -FilePath "$env:TEMP\setup_stderr.txt" -Append -Encoding UTF8
+
+  return $process.ExitCode
+}
+
 # Step 2: Check for agent.conf or startUp.properties to determine node type
 $agentConfPath = -join ($striimInstallPath, "\conf\agent.conf")
 $startUpPropsPath = -join ($striimInstallPath, "\conf\startUp.properties")
@@ -145,36 +238,13 @@ if (Test-Path $agentConfPath) {
             } else {
                 Write-Host "[Envrnmt] Downloading Striim from $downloadUrl to $zipFilePath... (note: this may take a few minutes depending on your internet speed; there is no progress bar)"
 
-                try {
-                    # Create an instance of HttpClient
-                    $httpClient = New-Object System.Net.Http.HttpClient
+                $downloadSuccess = Download-FileIfNotExists -Uri $downloadUrl -DownloadPath $zipFilePath
 
-                    # Send an asynchronous GET request to download the file
-                    $response = $httpClient.GetAsync($downloadUrl).Result
-
-                    # Ensure the response was successful
-                    if ($response.IsSuccessStatusCode) {
-                        # Read the content of the response as a byte array
-                        $content = $response.Content.ReadAsByteArrayAsync().Result
-
-                        # Write the content to the specified file path
-                        [System.IO.File]::WriteAllBytes($zipFilePath, $content)
-                        Write-Host "[Envrnmt] Download complete!"
-                    } else {
-                        Write-Host "[Envrnmt] Download failed. HTTP Status: $($response.StatusCode)"
-                        Write-Host "[Envrnmt] Downloading using slower method... this may take a while..."
-                        Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing
-                        Write-Host "[Envrnmt] Download complete!"
-                    }
-
-                    # Dispose of the HttpClient instance
-                    $httpClient.Dispose()
-                }
-                catch {
-                    Write-Error "[Error] Download failed: $($_.Exception.Message)"
-                    Write-Host "[Envrnmt] Downloading using slower method... this may take a while..."
-                    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipFilePath -UseBasicParsing
+                if ($downloadSuccess) {
                     Write-Host "[Envrnmt] Download complete!"
+                } else {
+                    Write-Host "[Envrnmt] Download failed!" -ForegroundColor Red
+                    #  Handle the download failure (e.g., exit the script, retry, log an error)
                 }
             }
 
@@ -382,33 +452,12 @@ if ($nodeType -eq "N") {
     }
 }
 
-# Function to check if the script is running as administrator
-function Test-IsAdmin {
-  ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-}
-
-# Function to execute a command as administrator in a new PowerShell process
-function Invoke-AsAdmin {
-  param(
-    [string]$ArgumentList
-  )
-
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = "powershell.exe"
-  $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -Command "' + $ArgumentList + '"'  # Single quotes
-  $psi.Verb = "RunAs"
-  $psi.WorkingDirectory = $PWD
-
-  $process = [System.Diagnostics.Process]::Start($psi)
-  $process.WaitForExit()
-  return $process.ExitCode
-}
 
 # Check if Striim lib directory is in PATH
 $striimLibPath = Join-Path $striimInstallPath "\lib" # Use Join-Path, it's more reliable than string concatenation
 Write-Host "[Config ]       -> Striim Lib Path set to: $striimLibPath"
 
-if ($env:Path -split ";" -contains $striimLibPath) {
+if ($env:Path -split ";" -icontains $striimLibPath) {
     Write-Host "[Config ] Success: Striim lib directory found in PATH."
 } else {
     Write-Host "[Config ] Fail***: Striim lib directory not found in PATH."
@@ -432,7 +481,8 @@ if ($env:Path -split ";" -contains $striimLibPath) {
             $commandToRunAsAdmin = "[Environment]::SetEnvironmentVariable('Path', ((Get-Item Env:Path).Value + ';$striimLibPath'), 'Machine')"
 
             # Call Invoke-AsAdmin with the command.
-            $exitCode = Invoke-AsAdmin -ArgumentList $commandToRunAsAdmin
+            $currentWorkingDirectory = Get-Location
+            $exitCode = Invoke-AsAdmin -ArgumentList $commandToRunAsAdmin -WorkingDirectory $currentWorkingDirectory
 
             if ($exitCode -eq 0) {
                 Write-Host "[Config ] Success: Striim lib directory added to PATH (elevated)."
@@ -546,8 +596,9 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
                 $downloadJavaChoice = Read-Host "  Download Java 11? (Y/N)"
                 if ($downloadJavaChoice.ToUpper() -eq "Y") {
                     $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
-                    Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
-                    Write-Host "[Java   ] Success: Java 11 installer downloaded to $javaDownloadPath. Please install it."
+                    Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
+                    # Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
+                    # Write-Host "[Java   ] Success: Java 11 installer downloaded to $javaDownloadPath. Please install it."
                 }
             }
         } elseif ($javaVersion -match "11\.0") {
@@ -559,8 +610,9 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
                 if ($downloadJavaChoice.ToUpper() -eq "Y") {
                     $javaDownloadUrl = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/8u422-b05/openlogic-openjdk-8u422-b05-windows-x64.msi"
                     $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
-                    Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
-                    Write-Host "[Java   ] Success: Java 8 installer downloaded to $javaDownloadPath. Please install it."
+                    Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
+                    #Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
+                    #Write-Host "[Java   ] Success: Java 8 installer downloaded to $javaDownloadPath. Please install it."
                 }
             }
         } else {
@@ -569,8 +621,9 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
             $downloadJavaChoice = Read-Host "  Download $requiredJavaVersion? (Y/N)"
             if ($downloadJavaChoice.ToUpper() -eq "Y") {
                 $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
-                Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
-                Write-Host "[Java   ] Success: $requiredJavaVersion installer downloaded to $javaDownloadPath. Please install it."
+                Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
+                #Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
+                #Write-Host "[Java   ] Success: $requiredJavaVersion installer downloaded to $javaDownloadPath. Please install it."
             }
         }
     } else {
@@ -582,8 +635,9 @@ if (Get-Command java -ErrorAction SilentlyContinue) {
     $downloadJavaChoice = Read-Host
     if ($downloadJavaChoice.ToUpper() -eq "Y") {
         $javaDownloadPath = Join-Path $downloadDir ($javaDownloadUrl.Split("/")[-1])
-        Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
-        Write-Host "[Java   ] Fail***: $requiredJavaVersion installer downloaded to $javaDownloadPath. Please install it."
+        Download-FileIfNotExists -Uri $javaDownloadUrl -DownloadPath $javaDownloadPath
+        #Invoke-WebRequest -Uri $javaDownloadUrl -OutFile $javaDownloadPath
+        #Write-Host "[Java   ] Fail***: $requiredJavaVersion installer downloaded to $javaDownloadPath. Please install it."
     }
 }
 
@@ -607,7 +661,8 @@ if (Test-Path $sqljdbcAuthDllPath) {
                     Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll copied to C:\Windows\System32 (already elevated)"
                 } else {
                     $copyCommand = "Copy-Item -Path '$sourceDllPath' -Destination '$sqljdbcAuthDllPath' -Force"
-                    $exitCode = Invoke-AsAdmin -ArgumentList $copyCommand
+                    $currentWorkingDirectory = Get-Location
+                    $exitCode = Invoke-AsAdmin -ArgumentList $copyCommand -WorkingDirectory $currentWorkingDirectory
                     if ($exitCode -eq 0) {
                         Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll copied to C:\Windows\System32 (elevated)"
                     } else {
@@ -630,7 +685,8 @@ if (Test-Path $sqljdbcAuthDllPath) {
                         Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll downloaded and copied to C:\Windows\System32 (already elevated)"
                     } else {
                         $copyCommand = "Copy-Item -Path '$downloadPath' -Destination '$sqljdbcAuthDllPath' -Force"
-                         $exitCode = Invoke-AsAdmin -ArgumentList $copyCommand
+                        $currentWorkingDirectory = Get-Location
+                        $exitCode = Invoke-AsAdmin -ArgumentList $copyCommand -WorkingDirectory $currentWorkingDirectory
                         if ($exitCode -eq 0) {
                             Write-Host "[Int Sec] Success: Integrated Security: sqljdbc_auth.dll downloaded and copied to C:\Windows\System32 (elevated)"
                         } else {
@@ -857,8 +913,9 @@ if (Get-Service $serviceName -ErrorAction SilentlyContinue) {
                 # Not running as admin, elevate
                 Write-Host "[Service] Elevating permissions to run service setup script: $setupScriptPath"
                 # Construct the command string.  Note the use of single quotes.
-                $scriptExecutionCommand = "& '$setupScriptPath'"
-                $exitCode = Invoke-AsAdmin -ArgumentList $scriptExecutionCommand
+                $currentWorkingDirectory = Join-Path -Path (Get-Location).Path -ChildPath "conf\windowsAgent"
+                $scriptExecutionCommand = "Set-Location -Path '$currentWorkingDirectory'; & '$setupScriptPath'"
+                $exitCode = Invoke-AsAdmin -ArgumentList $scriptExecutionCommand -WorkingDirectory $currentWorkingDirectory
 
                 if ($exitCode -eq 0) {
                     Write-Host "[Service] Service setup script completed successfully (elevated)."
