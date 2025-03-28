@@ -4,7 +4,7 @@ This PowerShell script automates the configuration and verification of a Striim 
 
 ## Prerequisites
 
-*   **PowerShell Version:** This script is designed to work with PowerShell, run as Administrator. 
+*   **PowerShell Version:** This script is designed to work with PowerShell. *DO NOT* run as Administrator. 
 *   **Striim Installation:** Place this Powershell Script in a valid Striim or Striim Agent base installation directory.
 
 ## Usage
