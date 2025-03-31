@@ -12,6 +12,7 @@ Write-Host "  • [Java Check]    Ensure compatible Java version installed. Offe
 Write-Host "  • [Security]      Setup Integrated Security sqljdbc_auth.dll (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
 Write-Host "  • [Patches]       Apply critical fixes for Striim v4.2.0.20 (if applicable)"
 Write-Host "  • [Service]       Configure Striim as Windows Service (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
+Write-Host "  • [Config ]       Prompt to generate or recreate jks and key files (if applicable)"
 Write-Host "------------------------------------------"
 Read-Host "`nPress Enter to continue or Ctrl+C to abort..."
 
@@ -308,6 +309,21 @@ if ($nodeType -eq "" -or (-not (Test-Path $striimInstallPath -PathType Container
     Write-Host "[Envrnmt] Success: User set Striim Install Path set to: $striimInstallPath"
 } else {
     Write-Host "[Envrnmt] Success: Striim Install Path set to: $striimInstallPath"
+}
+
+if ($nodeType -eq "A") {
+    $jksFileName = "aks.jks"
+    $pwdFileName = "aksKey.pwd"
+    $configScriptName = "aksConfig.bat"
+    $configType = "AKS"
+    Write-Host "Node type set to 'A' (AKS)" -ForegroundColor Cyan
+}
+elseif ($nodeType -eq "N") {
+    $jksFileName = "sks.jks"
+    $pwdFileName = "sksKey.pwd"
+    $configScriptName = "sksConfig.bat"
+    $configType = "SKS"
+     Write-Host "Node type set to 'N' (SKS)" -ForegroundColor Cyan
 }
 
 # Agent-specific checks
@@ -1043,4 +1059,168 @@ if (Get-Service $serviceName -ErrorAction SilentlyContinue) {
 
 		Write-Host "[Service] * Note : If your Striim service is using Integrated Security, you may need to change the user the service runs as."
 	}
+}
+
+# Construct core paths AFTER $striimInstallPath is confirmed
+$striimLibPath = Join-Path -Path $striimInstallPath -ChildPath "lib"
+$striimConfPath = Join-Path -Path $striimInstallPath -ChildPath "conf"
+$striimBinPath = Join-Path -Path $striimInstallPath -ChildPath "bin"
+
+# --- [Config JKS] JKS/Key File Generation ---
+Write-Host "[Config JKS] Checking $configType Key Store (JKS) and Password files..."
+
+# Use paths constructed earlier ($striimConfPath, $striimBinPath)
+# Check base paths again just before use
+if (!(Test-Path -Path $striimConfPath -PathType Container)) {
+    Write-Error "[Config JKS] Error: Configuration directory '$striimConfPath' not found. Cannot check/manage JKS/PWD files."
+} elseif (!(Test-Path -Path $striimBinPath -PathType Container)) {
+    Write-Error "[Config JKS] Error: Bin directory '$striimBinPath' not found. Cannot run configuration scripts."
+} else {
+    # Proceed only if base paths are valid
+
+    # Variables $jksFileName, $pwdFileName, $configScriptName, $configType should be set based on $nodeType earlier
+    if ([string]::IsNullOrEmpty($jksFileName) -or [string]::IsNullOrEmpty($pwdFileName) -or [string]::IsNullOrEmpty($configScriptName) -or [string]::IsNullOrEmpty($configType)) {
+         Write-Error "[Config JKS] Internal Error: Node type variables (jksFileName, etc.) not set correctly. NodeType was '$nodeType'."
+    } else {
+        $jksPath = Join-Path -Path $striimConfPath -ChildPath $jksFileName
+        $pwdPath = Join-Path -Path $striimConfPath -ChildPath $pwdFileName
+        $configScriptPath = Join-Path -Path $striimBinPath -ChildPath $configScriptName
+
+        Write-Host "[Config JKS]  JKS File Path: '$jksPath'"
+        Write-Host "[Config JKS]  PWD File Path: '$pwdPath'"
+        Write-Host "[Config JKS]  Config Script: '$configScriptPath'"
+
+        # Check File Existence
+        $filesExist = (Test-Path -Path $jksPath -PathType Leaf) -and (Test-Path -Path $pwdPath -PathType Leaf)
+
+        # Prompt User
+        $runConfigScript = $false
+        $deleteFilesFirst = $false
+
+        if ($filesExist) {
+            Write-Host "[Config JKS] Configuration files '$jksFileName' and '$pwdFileName' already exist." -ForegroundColor Yellow
+            $response = ""
+            while ($response -notin ('y','n')) {
+                $response = Read-Host "[Config JKS] Do you want to re-run '$configScriptName'? This will DELETE the existing files first. (y/n)"
+                $response = $response.ToLower()
+            }
+            if ($response -eq 'y') {
+                $runConfigScript = $true
+                $deleteFilesFirst = $true
+            }
+        } else {
+            Write-Host "[Config JKS] Configuration files '$jksFileName' and/or '$pwdFileName' do not exist." -ForegroundColor Yellow
+            $response = ""
+            while ($response -notin ('y','n')) {
+                $response = Read-Host "[Config JKS] Do you want to run '$configScriptName' now to create them? (y/n)"
+                $response = $response.ToLower()
+            }
+             if ($response -eq 'y') {
+                $runConfigScript = $true
+            }
+        }
+
+        # Execute Actions
+        if ($runConfigScript) {
+            # Deletion (No elevation needed here based on user feedback)
+            if ($deleteFilesFirst) {
+                Write-Host "[Config JKS] Attempting to delete existing configuration files..."
+                try {
+                    # Check existence again before attempting removal
+                    if (Test-Path -Path $jksPath -PathType Leaf) {
+                        Remove-Item -Path $jksPath -Force -ErrorAction Stop
+                        Write-Host "[Config JKS]  Deleted '$jksPath'" -ForegroundColor Green
+                    }
+                     if (Test-Path -Path $pwdPath -PathType Leaf) {
+                        Remove-Item -Path $pwdPath -Force -ErrorAction Stop
+                        Write-Host "[Config JKS]  Deleted '$pwdPath'" -ForegroundColor Green
+                    }
+                } catch {
+                    # If direct deletion fails without admin, it's likely a permissions issue the script can't bypass
+                    Write-Error "[Config JKS] Failed to delete files: $($_.Exception.Message). Check permissions on '$striimConfPath'."
+                    $runConfigScript = $false # Prevent script run if deletion failed
+                }
+            } # End deletion block
+
+            # Run Config Script (Only if $runConfigScript is still true)
+            if ($runConfigScript) {
+                if (!(Test-Path -Path $configScriptPath -PathType Leaf)) {
+                     Write-Error "[Config JKS] Configuration script '$configScriptPath' not found! Cannot execute."
+                } else {
+                    Write-Host "[Config JKS] Preparing to run '$configScriptName' directly..." -ForegroundColor Cyan
+                    Write-Host "[Config JKS]   Script Path: $configScriptPath" -ForegroundColor Cyan
+                    $scriptDir = Split-Path -Path $configScriptPath -Parent
+                    Write-Host "[Config JKS]   Setting Working Directory to: $scriptDir" -ForegroundColor Cyan
+
+                    try
+                    {
+                        # Prepare parameters for Start-Process using a hashtable (splatting)
+                        # *** Executing .bat file directly, NO Admin, specific Working Directory ***
+                        $processInfo = @{
+                            FilePath         = $configScriptPath # Execute the .bat file directly
+                            WorkingDirectory = $scriptDir      # Set the working directory explicitly
+                            Wait             = $true           # Wait for the script to finish
+                            PassThru         = $true           # Get the process object back
+                            ErrorAction      = 'Stop'          # Stop if Start-Process itself fails to launch
+                            # NO -Verb RunAs needed
+                            # NO ArgumentList needed to invoke cmd.exe
+                        }
+
+                        Write-Host "[Config JKS] Running script '$configScriptName' (no elevation)..."
+                        $process = Start-Process @processInfo
+
+                        # Check Exit Code after -Wait
+                        if ($process) {
+                            $exitCodeFromScript = $process.ExitCode # Exit code from the .bat script process itself
+                            Write-Host "[Config JKS] Script process exited with code: $exitCodeFromScript" -ForegroundColor Cyan
+
+                            # --- Verification --- (Keep this)
+                            Write-Host "[Config JKS] Verifying output file existence..."
+                            if (Test-Path -Path $jksPath -PathType Leaf -ErrorAction SilentlyContinue) {
+                                Write-Host "[Config JKS] Verified: '$jksFileName' exists after script execution." -ForegroundColor Green
+                            } else {
+                                Write-Warning "[Config JKS] Verification Failed: '$jksFileName' does NOT exist after script execution. The script likely failed internally (Exit Code: $exitCodeFromScript)."
+                            }
+                            if (Test-Path -Path $pwdPath -PathType Leaf -ErrorAction SilentlyContinue) {
+                                Write-Host "[Config JKS] Verified: '$pwdFileName' exists after script execution." -ForegroundColor Green
+                            } else {
+                                Write-Warning "[Config JKS] Verification Failed: '$pwdFileName' does NOT exist after script execution. The script likely failed internally (Exit Code: $exitCodeFromScript)."
+                            }
+                            # --- End Verification ---
+
+                            if ($exitCodeFromScript -ne 0) {
+                                Write-Warning "[Config JKS] '$configScriptName' process finished with a non-zero exit code ($exitCodeFromScript), indicating potential errors within the batch script."
+                                Write-Warning "[Config JKS] Check console output (if any) or logs produced by '$configScriptName' for specific errors."
+                            } else {
+                                Write-Host "[Config JKS] '$configScriptName' process completed with exit code 0." -ForegroundColor Green
+                            }
+                        } else {
+                             Write-Warning "[Config JKS] Failed to get process object back from Start-Process. Cannot determine exit code or verify results."
+                        }
+                    }
+                    catch
+                    {
+                        # Catch errors launching the Start-Process command itself
+                        Write-Error "[Config JKS] Error launching '$configScriptName': $($_.Exception.Message)"
+                        Write-Error "[Config JKS] Full Error Record: $($_.ToString())"
+                    }
+                } # End script execution block
+            }# End if($runConfigScript) after deletion check
+        } else { # if not $runConfigScript initially
+             Write-Host "[Config JKS] Configuration script '$configScriptName' will not be run based on user input." -ForegroundColor Yellow
+        }
+    } # End check for valid node type variables
+} # End check for valid base paths
+
+Write-Host "[Config JKS] Finished JKS/Key File check."
+# --- END JKS/Key File Generation ---
+
+# --- Final Summary ---
+Write-Host "`n------------------------------------------"
+Write-Host "Striim Configuration Check Finished."
+Write-Host "------------------------------------------"
+Write-Host "Please review the output above for any warnings or errors."
+Write-Host "Some changes (like System PATH or Java installation) may require restarting your terminal or system."
+if ($Host.Name -eq "ConsoleHost") {
+    Read-Host "Press Enter to exit the script."
 }
