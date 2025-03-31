@@ -1101,7 +1101,7 @@ if (!(Test-Path -Path $striimConfPath -PathType Container)) {
             Write-Host "[Config JKS] Configuration files '$jksFileName' and '$pwdFileName' already exist." -ForegroundColor Yellow
             $response = ""
             while ($response -notin ('y','n')) {
-                $response = Read-Host "[Config JKS] Do you want to re-run '$configScriptName'? This will DELETE the existing files first. (y/n)"
+                $response = Read-Host "[Config JKS] Do you want to re-run '$configScriptName' AS ADMINISTRATOR? This will DELETE the existing files first. (y/n)"
                 $response = $response.ToLower()
             }
             if ($response -eq 'y') {
@@ -1112,7 +1112,7 @@ if (!(Test-Path -Path $striimConfPath -PathType Container)) {
             Write-Host "[Config JKS] Configuration files '$jksFileName' and/or '$pwdFileName' do not exist." -ForegroundColor Yellow
             $response = ""
             while ($response -notin ('y','n')) {
-                $response = Read-Host "[Config JKS] Do you want to run '$configScriptName' now to create them? (y/n)"
+                $response = Read-Host "[Config JKS] Do you want to run '$configScriptName' AS ADMINISTRATOR now to create them? (y/n)"
                 $response = $response.ToLower()
             }
              if ($response -eq 'y') {
@@ -1122,22 +1122,40 @@ if (!(Test-Path -Path $striimConfPath -PathType Container)) {
 
         # Execute Actions
         if ($runConfigScript) {
-            # Deletion (No elevation needed here based on user feedback)
+            # Deletion (Attempt direct first, then elevated if needed via Invoke-AsAdmin)
             if ($deleteFilesFirst) {
                 Write-Host "[Config JKS] Attempting to delete existing configuration files..."
+                $deletionSuccess = $true
                 try {
-                    # Check existence again before attempting removal
-                    if (Test-Path -Path $jksPath -PathType Leaf) {
-                        Remove-Item -Path $jksPath -Force -ErrorAction Stop
-                        Write-Host "[Config JKS]  Deleted '$jksPath'" -ForegroundColor Green
-                    }
-                     if (Test-Path -Path $pwdPath -PathType Leaf) {
-                        Remove-Item -Path $pwdPath -Force -ErrorAction Stop
-                        Write-Host "[Config JKS]  Deleted '$pwdPath'" -ForegroundColor Green
+                    # Try direct deletion first
+                    if (Test-Path -Path $jksPath -PathType Leaf) { Remove-Item -Path $jksPath -Force -ErrorAction Stop }
+                    if (Test-Path -Path $pwdPath -PathType Leaf) { Remove-Item -Path $pwdPath -Force -ErrorAction Stop }
+                    Write-Host "[Config JKS]  Direct deletion attempt finished."
+                    # Verify deletion
+                    if ((Test-Path -Path $jksPath -PathType Leaf) -or (Test-Path -Path $pwdPath -PathType Leaf)) {
+                         throw "Direct deletion failed or files still exist."
+                    } else {
+                         Write-Host "[Config JKS]  Successfully deleted files directly." -ForegroundColor Green
                     }
                 } catch {
-                    # If direct deletion fails without admin, it's likely a permissions issue the script can't bypass
-                    Write-Error "[Config JKS] Failed to delete files: $($_.Exception.Message). Check permissions on '$striimConfPath'."
+                    Write-Warning "[Config JKS] Direct deletion failed: $($_.Exception.Message). Attempting with elevation via Invoke-AsAdmin..."
+                    # Construct command for elevated deletion
+                    # Escape paths for PowerShell command string
+                    $escapedJksPath = $jksPath -replace "'", "''"
+                    $escapedPwdPath = $pwdPath -replace "'", "''"
+                    $deleteCommand = "if(Test-Path -Path '$escapedJksPath'){ Remove-Item -Path '$escapedJksPath' -Force -ErrorAction SilentlyContinue }; if(Test-Path -Path '$escapedPwdPath'){ Remove-Item -Path '$escapedPwdPath' -Force -ErrorAction SilentlyContinue }; exit 0" # Exit 0 even if files didn't exist
+
+                    $exitCode = Invoke-AsAdmin -ArgumentList $deleteCommand -WorkingDirectory $striimConfPath
+                    # Verify deletion after elevation attempt
+                    if ((Test-Path -Path $jksPath -PathType Leaf) -or (Test-Path -Path $pwdPath -PathType Leaf)) {
+                        Write-Error "[Config JKS] Failed to delete files even with elevation (Exit Code: $exitCode). Check permissions on '$striimConfPath'."
+                        $deletionSuccess = $false
+                    } else {
+                        Write-Host "[Config JKS]  Successfully deleted files (elevated)." -ForegroundColor Green
+                    }
+                }
+                if (-not $deletionSuccess) {
+                    Write-Warning "[Config JKS] Failed to delete necessary files. Stopping execution of '$configScriptName'."
                     $runConfigScript = $false # Prevent script run if deletion failed
                 }
             } # End deletion block
@@ -1147,61 +1165,76 @@ if (!(Test-Path -Path $striimConfPath -PathType Container)) {
                 if (!(Test-Path -Path $configScriptPath -PathType Leaf)) {
                      Write-Error "[Config JKS] Configuration script '$configScriptPath' not found! Cannot execute."
                 } else {
-                    Write-Host "[Config JKS] Preparing to run '$configScriptName' directly..." -ForegroundColor Cyan
+                    Write-Host "[Config JKS] Preparing to run '$configScriptName' as Administrator..." -ForegroundColor Cyan
                     Write-Host "[Config JKS]   Script Path: $configScriptPath" -ForegroundColor Cyan
                     $scriptDir = Split-Path -Path $configScriptPath -Parent
-                    Write-Host "[Config JKS]   Setting Working Directory to: $scriptDir" -ForegroundColor Cyan
+                    Write-Host "[Config JKS]   Target Directory for elevated process: $scriptDir" -ForegroundColor Cyan
+
+                    # Construct the PowerShell command string to be executed elevated via Invoke-AsAdmin.
+                    # Use a HEREDOC string (@"..."@) for clarity.
+                    # 1. Explicitly Set-Location IN the elevated process.
+                    # 2. Execute the batch file using cmd /c for better error handling/exit codes.
+                    # 3. Capture and exit with the batch file's exit code.
+                    # Escape literal quotes (\") needed for the cmd /c command.
+                    # Escape single quotes ('') inside paths if they could occur, for robustness within the outer single quotes of Set-Location.
+                    $commandToRunElevated = @"
+# Ensure paths with potential single quotes are handled
+`$scriptDirForElevated = '$($scriptDir -replace "'", "''")'
+`$configScriptPathForElevated = '$($configScriptPath -replace "'", "''")'
+
+Write-Host "Elevated Shell: Setting location to `"`$scriptDirForElevated`"..."
+Set-Location -Path "`$scriptDirForElevated" -ErrorAction Stop
+Write-Host "Elevated Shell: Current Directory = `$(Get-Location)"
+Write-Host "Elevated Shell: Executing '`$configScriptPathForElevated' via cmd /c..."
+
+# Execute the batch file using cmd /c (quotes around path handle spaces)
+cmd /c "\`"`$configScriptPathForElevated\`""
+
+# Capture the exit code from cmd.exe/batch file
+`$exitCode = `$LASTEXITCODE
+Write-Host "Elevated Shell: cmd /c finished with Exit Code: `$exitCode"
+
+# Exit the elevated PowerShell script with the captured exit code
+exit `$exitCode
+"@
+                    # For debugging: Print the command that will be run elevated
+                    # Write-Host "[Config JKS] Command to run elevated:"
+                    # Write-Host $commandToRunElevated -ForegroundColor DarkGray
 
                     try
                     {
-                        # Prepare parameters for Start-Process using a hashtable (splatting)
-                        # *** Executing .bat file directly, NO Admin, specific Working Directory ***
-                        $processInfo = @{
-                            FilePath         = $configScriptPath # Execute the .bat file directly
-                            WorkingDirectory = $scriptDir      # Set the working directory explicitly
-                            Wait             = $true           # Wait for the script to finish
-                            PassThru         = $true           # Get the process object back
-                            ErrorAction      = 'Stop'          # Stop if Start-Process itself fails to launch
-                            # NO -Verb RunAs needed
-                            # NO ArgumentList needed to invoke cmd.exe
-                        }
+                        Write-Host "[Config JKS] Attempting elevation using Invoke-AsAdmin..."
+                        # Use the existing Invoke-AsAdmin function
+                        # Pass the constructed PowerShell command block as the ArgumentList
+                        # WorkingDirectory here sets the initial CWD for the elevated powershell.exe process
+                        $processExitCode = Invoke-AsAdmin -ArgumentList $commandToRunElevated -WorkingDirectory $scriptDir
 
-                        Write-Host "[Config JKS] Running script '$configScriptName' (no elevation)..."
-                        $process = Start-Process @processInfo
+                        Write-Host "[Config JKS] Elevated process finished with Exit Code: $processExitCode" -ForegroundColor Cyan
 
-                        # Check Exit Code after -Wait
-                        if ($process) {
-                            $exitCodeFromScript = $process.ExitCode # Exit code from the .bat script process itself
-                            Write-Host "[Config JKS] Script process exited with code: $exitCodeFromScript" -ForegroundColor Cyan
-
-                            # --- Verification --- (Keep this)
-                            Write-Host "[Config JKS] Verifying output file existence..."
-                            if (Test-Path -Path $jksPath -PathType Leaf -ErrorAction SilentlyContinue) {
-                                Write-Host "[Config JKS] Verified: '$jksFileName' exists after script execution." -ForegroundColor Green
-                            } else {
-                                Write-Warning "[Config JKS] Verification Failed: '$jksFileName' does NOT exist after script execution. The script likely failed internally (Exit Code: $exitCodeFromScript)."
-                            }
-                            if (Test-Path -Path $pwdPath -PathType Leaf -ErrorAction SilentlyContinue) {
-                                Write-Host "[Config JKS] Verified: '$pwdFileName' exists after script execution." -ForegroundColor Green
-                            } else {
-                                Write-Warning "[Config JKS] Verification Failed: '$pwdFileName' does NOT exist after script execution. The script likely failed internally (Exit Code: $exitCodeFromScript)."
-                            }
-                            # --- End Verification ---
-
-                            if ($exitCodeFromScript -ne 0) {
-                                Write-Warning "[Config JKS] '$configScriptName' process finished with a non-zero exit code ($exitCodeFromScript), indicating potential errors within the batch script."
-                                Write-Warning "[Config JKS] Check console output (if any) or logs produced by '$configScriptName' for specific errors."
-                            } else {
-                                Write-Host "[Config JKS] '$configScriptName' process completed with exit code 0." -ForegroundColor Green
-                            }
+                        # --- Verification --- (Runs after elevation attempt returns)
+                        Write-Host "[Config JKS] Verifying output file existence..."
+                        if (Test-Path -Path $jksPath -PathType Leaf -ErrorAction SilentlyContinue) {
+                            Write-Host "[Config JKS] Verified: '$jksFileName' exists after script execution." -ForegroundColor Green
                         } else {
-                             Write-Warning "[Config JKS] Failed to get process object back from Start-Process. Cannot determine exit code or verify results."
+                            Write-Warning "[Config JKS] Verification Failed: '$jksFileName' does NOT exist after script execution. Elevated script likely failed internally (Exit Code: $processExitCode)."
+                        }
+                         if (Test-Path -Path $pwdPath -PathType Leaf -ErrorAction SilentlyContinue) {
+                            Write-Host "[Config JKS] Verified: '$pwdFileName' exists after script execution." -ForegroundColor Green
+                        } else {
+                            Write-Warning "[Config JKS] Verification Failed: '$pwdFileName' does NOT exist after script execution. Elevated script likely failed internally (Exit Code: $processExitCode)."
+                        }
+                         # --- End Verification ---
+
+                        if ($processExitCode -ne 0) {
+                            Write-Warning "[Config JKS] Elevated process for '$configScriptName' finished with a non-zero exit code ($processExitCode)."
+                            Write-Warning "[Config JKS] This likely indicates errors within the batch script '$configScriptName'. Review logs or output if the script creates any."
+                        } else {
+                            Write-Host "[Config JKS] Elevated process for '$configScriptName' completed successfully (Exit Code 0)." -ForegroundColor Green
                         }
                     }
-                    catch
+                    catch # Catches errors from Invoke-AsAdmin itself (e.g., UAC denial) or if ErrorAction Stop is hit inside $commandToRunElevated
                     {
-                        # Catch errors launching the Start-Process command itself
-                        Write-Error "[Config JKS] Error launching '$configScriptName': $($_.Exception.Message)"
+                        Write-Error "[Config JKS] Failed to execute Invoke-AsAdmin or error within elevated script: $($_.Exception.Message)"
                         Write-Error "[Config JKS] Full Error Record: $($_.ToString())"
                     }
                 } # End script execution block
