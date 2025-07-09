@@ -49,7 +49,7 @@ On a machine with an internet connection, run the script with the `--DownloadOnl
 
 **2. Transfer to Offline Machine:**
 
-Copy the entire directory, including the script (`msjetchecker.ps1`) and the newly populated `downloads` folder, to the offline target machine's Striim installation directory.
+Copy the entire directory, including the script (`msjetchecker.ps1`) and the newly populated `downloads` folder, to the offline target machine's Striim installation directory (i.e. C:\striim).
 
 **3. Run on Offline Machine:**
 
