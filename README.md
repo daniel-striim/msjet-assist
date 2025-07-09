@@ -34,14 +34,17 @@ The script fully supports offline environments. To prepare for this, you must fi
 
 **1. Download All Files (Online Machine):**
 
-On a machine with an internet connection, run the script with the `--downloadonly` and `--version` flags. This will create a `downloads` subfolder and populate it with all installers, libraries, and patches needed for the specified Striim version.
+On a machine with an internet connection, run the script with the `--DownloadOnly` and `--Version` flags. This will create a `downloads` subfolder and populate it with all installers, libraries, and patches needed for the specified Striim version.
 
 ```
 # Example: Download all files needed for Striim v5.0.6
-.\msjetchecker.ps1 --version 5.0.6 --downloadonly
+.\msjetchecker.ps1 -Version 5.0.6 -Agent -DownloadOnly
 
 # Example: Download all files needed for Striim v4.2.0.20
-.\msjetchecker.ps1 --version 4.2.0.20 --downloadonly
+.\msjetchecker.ps1 -Version 4.2.0.20 -Agent -DownloadOnly
+
+# Example for 4.2.0.20 Full Node:
+.\msjetchecker.ps1 -Version 4.2.0.20 -Node -DownloadOnly
 ```
 
 **2. Transfer to Offline Machine:**

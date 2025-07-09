@@ -1,11 +1,23 @@
 #region Script Parameters and File Manifest
+[CmdletBinding()]
 # The param block must be the first executable statement in the script.
 param(
     # Specifies the target Striim version to determine correct dependencies. Required for --downloadonly or initial install.
+    [Parameter()]
     [string]$Version,
 
     # If specified, the script will only download all potential dependencies into the 'downloads' folder and then exit.
-    [switch]$DownloadOnly
+    # Requires --version and either --agent or --node.
+    [Parameter()]
+    [switch]$DownloadOnly,
+
+    # Used with --downloadonly to specify that Agent-specific files should be downloaded.
+    [Parameter()]
+    [switch]$Agent,
+
+    # Used with --downloadonly to specify that Node-specific files should be downloaded.
+    [Parameter()]
+    [switch]$Node
 )
 
 # Set strict mode to catch common errors. This is placed after the param() block as required.
@@ -13,6 +25,7 @@ Set-StrictMode -Version Latest
 
 # Central manifest of all downloadable files
 # This allows for easy management and enables the --downloadonly feature.
+# NodeType 'A' = Agent, 'N' = Node. Files without NodeType are common to both.
 $AllDownloads = @(
     # Dependencies
     [pscustomobject]@{ Name = "icudt72.dll"; Url = "https://github.com/daniel-striim/StriimQueryAutoLoader/raw/main/MSJet/Dlls/icudt72.dll"; Category = "Dependency"; MinVersion = "0.0"; MaxVersion = "99.9" }
@@ -31,10 +44,10 @@ $AllDownloads = @(
     [pscustomobject]@{ Name = "msoledbsql.msi"; Url = "https://go.microsoft.com/fwlink/?linkid=2278907"; Category = "Prereq"; MinVersion = "0.0"; MaxVersion = "99.9" }
 
     # JDBC Drivers
-    [pscustomobject]@{ Name = "mariadb-java-client-2.4.3.jar"; Url = "https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/2.4.3/mariadb-java-client-2.4.3.jar"; Category = "Driver"; MinVersion = "0.0"; MaxVersion = "99.9" }
-    [pscustomobject]@{ Name = "mysql-connector-j-8.0.30.zip"; Url = "https://cdn.mysql.com/archives/mysql-connector-j/mysql-connector-j-8.0.30.zip"; Category = "Driver"; MinVersion = "0.0"; MaxVersion = "99.9" }
-    [pscustomobject]@{ Name = "instantclient-basic-windows.x64-21.6.0.0.0dbru.zip"; Url = "https://download.oracle.com/otn_software/nt/instantclient/216000/instantclient-basic-windows.x64-21.6.0.0.0dbru.zip"; Category = "Driver"; MinVersion = "0.0"; MaxVersion = "99.9" }
-    [pscustomobject]@{ Name = "postgresql-42.2.27.jar"; Url = "https://jdbc.postgresql.org/download/postgresql-42.2.27.jar"; Category = "Driver"; MinVersion = "0.0"; MaxVersion = "99.9" }
+    [pscustomobject]@{ Name = "mariadb-java-client-2.4.3.jar"; Url = "https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/2.4.3/mariadb-java-client-2.4.3.jar"; Category = "Driver"; MinVersion = "0.0"; MaxVersion = "99.9"; NodeType = "A" }
+    [pscustomobject]@{ Name = "mysql-connector-j-8.0.30.zip"; Url = "https://cdn.mysql.com/archives/mysql-connector-j/mysql-connector-j-8.0.30.zip"; Category = "Driver"; MinVersion = "0.0"; MaxVersion = "99.9"; NodeType = "A" }
+    [pscustomobject]@{ Name = "instantclient-basic-windows.x64-21.6.0.0.0dbru.zip"; Url = "https://download.oracle.com/otn_software/nt/instantclient/216000/instantclient-basic-windows.x64-21.6.0.0.0dbru.zip"; Category = "Driver"; MinVersion = "0.0"; MaxVersion = "99.9"; NodeType = "A" }
+    [pscustomobject]@{ Name = "postgresql-42.2.27.jar"; Url = "https://jdbc.postgresql.org/download/postgresql-42.2.27.jar"; Category = "Driver"; MinVersion = "0.0"; MaxVersion = "99.9"; NodeType = "A" }
 
     # Patches for 4.2.0.20
     [pscustomobject]@{ Name = "Platform_48036_v4.2.0.20_27_Sep_2024.jar"; Url = "https://github.com/daniel-striim/StriimQueryAutoLoader/raw/refs/heads/main/MSJet/FixesFor4.2.0.20/Platform_48036_v4.2.0.20_27_Sep_2024.jar"; Category = "Patch"; TargetFile = "Platform-4.2.0.20.jar"; MinVersion = "4.2.0.20"; MaxVersion = "4.2.0.20" }
@@ -188,6 +201,10 @@ try {
             exit 1
         }
 
+        # Get the current script's name to avoid deleting it and for later use
+        $thisScriptPath = $PSCommandPath
+        $thisScriptName = Split-Path $thisScriptPath -Leaf
+
         # 1. Get Version from parameter or prompt
         $targetVersion = $script:Version
         while ([string]::IsNullOrWhiteSpace($targetVersion)) {
@@ -218,8 +235,9 @@ try {
                 Write-Host "[Installer] Skipping installation, using existing directory at '$installPath'."
                 $performInstall = $false
             } else {
-                Write-Host "[Installer] Removing existing directory to overwrite..."
-                Remove-Item -Path $installPath -Recurse -Force
+                # MODIFICATION: Instead of deleting the whole directory, delete its contents except for 'downloads', the script itself, and msjetchecker.ps1
+                Write-Host "[Installer] Removing contents of existing directory (excluding 'downloads', '$thisScriptName', and 'msjetchecker.ps1')..."
+                Get-ChildItem -Path $installPath -Force | Where-Object { $_.Name -ne 'downloads' -and $_.Name -ne $thisScriptName -and $_.Name -ne 'msjetchecker.ps1' } | Remove-Item -Recurse -Force
             }
         }
 
@@ -228,7 +246,7 @@ try {
             Write-Host "[Installer] Created installation directory: $installPath"
 
             # 4. Download the MAIN application
-            $installerInfo = $AllDownloads | Where-Object { $_.Category -eq "MainInstaller" -and $_.NodeType -eq $installType } | Select-Object -First 1
+            $installerInfo = $AllDownloads | Where-Object { $_.psobject.Properties['NodeType'] -and $_.NodeType -eq $installType -and $_.Category -eq "MainInstaller" } | Select-Object -First 1
             if (-not $installerInfo) {
                 throw "[Installer] Could not find MAIN installer information for type '$nodeName' in the script manifest."
             }
@@ -245,11 +263,15 @@ try {
             try {
                 Expand-Archive -Path $zipPath -DestinationPath $installPath -Force
 
-                $subDirs = @(Get-ChildItem -Path $installPath -Directory)
+                # MODIFICATION: Exclude the 'downloads' directory when checking for a single subdirectory.
+                $subDirs = @(Get-ChildItem -Path $installPath -Directory -Force | Where-Object { $_.Name -ne 'downloads' })
+
                 if ($subDirs.Count -eq 1) {
                     $singleSubDir = $subDirs[0]
                     Write-Host "[Installer] Moving contents from single subdirectory '$($singleSubDir.Name)' up one level."
+                    # Move all items (files and folders) from the subdirectory to the parent installation path.
                     Get-ChildItem -Path $singleSubDir.FullName -Force | Move-Item -Destination $installPath -Force
+                    # Remove the now-empty subdirectory.
                     Remove-Item -Path $singleSubDir.FullName -Force
                 }
             } catch {
@@ -259,8 +281,6 @@ try {
         }
 
         # 6. Copy self and re-launch
-        $thisScriptPath = $PSCommandPath
-        $thisScriptName = Split-Path $thisScriptPath -Leaf
         $newScriptPath = Join-Path $installPath $thisScriptName
         Write-Host "[Installer] Copying this script to '$newScriptPath'..."
         Copy-Item -Path $thisScriptPath -Destination $newScriptPath -Force
@@ -478,7 +498,6 @@ try {
 
         $striimLibPath = Join-Path -Path $striimInstallPath -ChildPath "lib"
 
-        # FIX: Use an [ordered] dictionary to maintain menu order.
         $driverMenu = [ordered]@{
             '1' = 'HP NonStop (Manual Path)'
             '2' = 'MariaDB (v2.4.3)'
@@ -489,7 +508,6 @@ try {
             '7' = 'Vertica (Manual Path)'
         }
 
-        # FIX: Use a flag to control the loop instead of relying on 'break' from switch
         $exitMenu = $false
         while (-not $exitMenu) {
             Write-Host "`n--- JDBC Driver Installation Menu ---"
@@ -629,57 +647,19 @@ try {
     }
     #endregion
 
-    # --- Initial Environment Check ---
-    $agentConfPath = Join-Path $striimInstallPath "conf\agent.conf"
-    $startUpPropsPath = Join-Path $striimInstallPath "conf\startUp.properties"
-    $isCurrentDirStriim = (Test-Path $agentConfPath) -or (Test-Path $startUpPropsPath)
-
-    if (-not $isCurrentDirStriim) {
-        # Not running from a Striim directory, let's check default locations
-        $existingInstall = Detect-ExistingStriim
-
-        if ($existingInstall) {
-            Write-Host "[Envrnmt] Detected existing Striim $($existingInstall.Type) version $($existingInstall.Version) at $($existingInstall.Path)"
-            if (-not (Confirm-UserChoice -Prompt "Do you want to download a different version?" -DefaultChoice 'n')) {
-                # User wants to use the existing version.
-                # Copy self and re-launch from that location.
-                $installPath = $existingInstall.Path
-                $thisScriptPath = $PSCommandPath
-                $thisScriptName = Split-Path $thisScriptPath -Leaf
-                $newScriptPath = Join-Path $installPath $thisScriptName
-                Write-Host "[Envrnmt] Using existing installation. Copying this script to '$newScriptPath'..."
-                Copy-Item -Path $thisScriptPath -Destination $newScriptPath -Force
-
-                $arguments = ""
-                $MyInvocation.BoundParameters.GetEnumerator() | ForEach-Object {
-                    if ($_.Value -is [System.Management.Automation.SwitchParameter]) {
-                        if ($_.Value.IsPresent) { $arguments += "-$($_.Key) " }
-                    } else {
-                        $arguments += "-$($_.Key) `"$($_.Value)`" "
-                    }
-                }
-
-                Write-Host "[Envrnmt] Relaunching script from the Striim directory. A new PowerShell window will open."
-                $relaunchCommand = "Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File `"$newScriptPath`" $arguments' -WorkingDirectory `"$installPath`""
-                Invoke-Expression $relaunchCommand
-                exit 0 # Exit the current script
-            } else {
-                # User wants to download a new version, proceed to the full installation flow.
-                Invoke-StriimInstallation
-            }
-        } else {
-            # No existing install found in default locations, and not in a Striim dir.
-            # Proceed to the full installation flow.
-            Invoke-StriimInstallation
-        }
-    }
-
-    # --- Download-Only Mode ---
+    # --- Main Logic Branching ---
     if ($DownloadOnly) {
+        # --- Download-Only Mode ---
         Write-Host "--- Download-Only Mode Activated ---" -ForegroundColor Cyan
+
+        # Validate parameters for this mode
         if ([string]::IsNullOrWhiteSpace($Version)) {
             throw "The --version parameter is required when using --downloadonly. Example: --version 5.0.6"
         }
+        if (($Agent -and $Node) -or (-not $Agent -and -not $Node)) {
+            throw "When using --downloadonly, you must specify exactly one of --agent or --node."
+        }
+
         try {
             $TargetVersion = [version]$Version
         }
@@ -687,10 +667,16 @@ try {
             throw "Invalid format for --version. Please use a format like '5.0.6'."
         }
 
-        Write-Host "Downloading all dependencies for Striim version $TargetVersion to '$downloadDir'..."
+        $nodeTypeLetter = if ($Agent) { 'A' } else { 'N' }
+        $nodeTypeName = if ($Agent) { 'Agent' } else { 'Node' }
 
+        Write-Host "Downloading all dependencies for Striim $nodeTypeName version $TargetVersion to '$downloadDir'..."
+
+        # Filter files based on version and node type.
+        # A file is included if its NodeType property does not exist (common file) or if it matches the requested type.
         $filesToDownload = $AllDownloads | Where-Object {
-            $TargetVersion -ge [version]$_.MinVersion -and $TargetVersion -le [version]$_.MaxVersion
+            ($TargetVersion -ge [version]$_.MinVersion -and $TargetVersion -le [version]$_.MaxVersion) -and
+            (-not $_.psobject.Properties['NodeType'] -or $_.NodeType -eq $nodeTypeLetter)
         }
 
         if (-not $filesToDownload) {
@@ -708,435 +694,479 @@ try {
         Write-Host "`n--- Download-Only Mode Finished ---" -ForegroundColor Cyan
         Write-Host "All applicable files have been downloaded to the '$downloadDir' folder."
         Write-Host "You can now transfer this entire directory to an offline machine and run the script normally."
-        exit 0
+        exit 0 # Exit successfully after downloads are complete.
     }
+    else {
+        # --- Standard / Interactive Mode ---
 
+        # --- Initial Environment Check ---
+        $agentConfPath = Join-Path $striimInstallPath "conf\agent.conf"
+        $startUpPropsPath = Join-Path $striimInstallPath "conf\startUp.properties"
+        $isCurrentDirStriim = (Test-Path $agentConfPath) -or (Test-Path $startUpPropsPath)
 
-    # --- Startup Summary (Standard Mode) ---
-    Write-Host "`nStarting Striim Configuration Check..."
-    Write-Host "------------------------------------------"
-    Write-Host "[Checks Summary] The following validations will occur:"
-    Write-Host "  • [System]        Verify ≥15GB free space on C: drive"
-    Write-Host "  • [Node Type]     Auto-detect Agent/Node or prompt for selection"
-    Write-Host "  • [Config Files]  Validate agent.conf/startUp.properties settings"
-    Write-Host "  • [Firewall]      AGENT ONLY: Check required inbound/outbound firewall rules (requires Admin) $([char]0x27a4)" -ForegroundColor Green
-    Write-Host "  • [System PATH]   Add Striim lib directory to system PATH (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
-    Write-Host "  • [Dependencies]  Verify required DLLs and offer to download them"
-    Write-Host "  • [Java Check]    Ensure compatible Java version is installed and offer download if needed"
-    Write-Host "  • [Security]      Setup Integrated Security sqljdbc_auth.dll (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
-    Write-Host "  • [Prereqs]       Verify required software (VC++ Redist, OLE DB Driver)" -ForegroundColor Green
-    Write-Host "  • [Patches]       Apply critical fixes for Striim v4.2.0.20 (if applicable)"
-    Write-Host "  • [Service]       Configure Striim as a Windows Service (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
-    Write-Host "  • [JKS Config]    Prompt to generate/recreate JKS and key files (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
-    Write-Host "  • [Drivers]       AGENT ONLY: Prompt to install common JDBC drivers" -ForegroundColor Green
-    Write-Host "------------------------------------------"
-    Read-Host "`nPress Enter to continue or Ctrl+C to abort..."
+        if (-not $isCurrentDirStriim) {
+            # Not running from a Striim directory, let's check default locations
+            $existingInstall = Detect-ExistingStriim
 
-    # --- Environment Validation ---
-    # 1. Check Disk Space
-    if ((Get-PSDrive -Name C).Free / 1GB -lt 15) {
-        throw "[Envrnmt] Insufficient disk space on C: drive. At least 15 GB is required."
-    } else {
-        Write-Host "[Envrnmt]       Sufficient disk space available on C: drive."
-    }
+            if ($existingInstall) {
+                Write-Host "[Envrnmt] Detected existing Striim $($existingInstall.Type) version $($existingInstall.Version) at $($existingInstall.Path)"
+                if (-not (Confirm-UserChoice -Prompt "Do you want to download a different version?" -DefaultChoice 'n')) {
+                    # User wants to use the existing version.
+                    # Copy self and re-launch from that location.
+                    $installPath = $existingInstall.Path
+                    $thisScriptPath = $PSCommandPath
+                    $thisScriptName = Split-Path $thisScriptPath -Leaf
+                    $newScriptPath = Join-Path $installPath $thisScriptName
+                    Write-Host "[Envrnmt] Using existing installation. Copying this script to '$newScriptPath'..."
+                    Copy-Item -Path $thisScriptPath -Destination $newScriptPath -Force
 
-    # 2. Detect Node Type
-    $nodeType = ""
-    if (Test-Path $agentConfPath) {
-        $nodeType = "A"
-        Write-Host "[Envrnmt]       -> AGENT Environment detected."
-    } elseif (Test-Path $startUpPropsPath) {
-        $nodeType = "N"
-        Write-Host "[Envrnmt]       -> NODE environment detected."
-    } else {
-        # This case should technically not be reached due to the initial check, but it's good practice.
-        throw "Striim not found. Please place the script in a Striim installation directory and re-run."
-    }
-    Write-Host "[Envrnmt] Success: Striim Install Path set to: $striimInstallPath"
+                    $arguments = ""
+                    $MyInvocation.BoundParameters.GetEnumerator() | ForEach-Object {
+                        if ($_.Value -is [System.Management.Automation.SwitchParameter]) {
+                            if ($_.Value.IsPresent) { $arguments += "-$($_.Key) " }
+                        } else {
+                            $arguments += "-$($_.Key) `"$($_.Value)`" "
+                        }
+                    }
 
-    # Define core paths now that install path is confirmed
-    $striimLibPath = Join-Path -Path $striimInstallPath -ChildPath "lib"
-    $striimConfPath = Join-Path -Path $striimInstallPath -ChildPath "conf"
-    $striimBinPath = Join-Path -Path $striimInstallPath -ChildPath "bin"
-
-    # Get Striim Version
-    $striimJarFile = Get-ChildItem -Path $striimLibPath -Filter "Platform-*.jar" | Select-Object -First 1
-    if (-not $striimJarFile) { throw "[Striim ] Fail***: Could not find Striim JAR file to determine version." }
-    $striimVersionString = $striimJarFile.Name -replace '^Platform-([\d\.]+)\.jar$', '$1'
-    $majorVersion = $striimVersionString.Split('.')[0]
-    Write-Host "[Striim  ] Success: Found Striim version $striimVersionString (Major version $majorVersion)"
-
-
-    # --- Configuration Checks ---
-    # 4. Update Configuration Files
-    if ($nodeType -eq "A") {
-        Write-Host "[Config ]       -> AGENT -> Specific Tests for configuration:"
-        $configValues = Update-ConfigFile -ConfigPath $agentConfPath -RequiredProps "striim.cluster.clusterName", "striim.node.servernode.address" -OptionalProps "MEM_MAX"
-        $jksFileName = "aks.jks"; $pwdFileName = "aksKey.pwd"; $configScriptName = "aksConfig.bat"; $configType = "AKS"
-
-        # --- Firewall Check ---
-        if ($configValues -and $configValues.ContainsKey("striim.node.servernode.address")) {
-            Test-FirewallRules -ServerAddress $configValues["striim.node.servernode.address"]
-        } else {
-            Write-Host "[Firewall] Skipping check because 'striim.node.servernode.address' could not be read." -ForegroundColor Yellow
-        }
-
-    } elseif ($nodeType -eq "N") {
-        Write-Host "[Config ]       -> NODE -> Specific Tests for configuration:"
-        Update-ConfigFile -ConfigPath $startUpPropsPath -RequiredProps "CompanyName", "LicenceKey", "ProductKey", "WAClusterName" -OptionalProps "MEM_MAX"
-        $jksFileName = "sks.jks"; $pwdFileName = "sksKey.pwd"; $configScriptName = "sksConfig.bat"; $configType = "SKS"
-    }
-
-    # 5. Check System PATH
-    Write-Host "[Config ]       -> Striim Lib Path set to: $striimLibPath"
-    $normalizedEnvPath = ($env:Path -split ';').TrimEnd('\')
-    $normalizedStriimLibPath = $striimLibPath.TrimEnd('\')
-    if ($normalizedEnvPath -icontains $normalizedStriimLibPath) { # Use -icontains for case-insensitivity
-        Write-Host "[Config ] Success: Striim lib directory found in PATH."
-    } else {
-        Write-Host "[Config ] Fail***: Striim lib directory not found in PATH."
-        if (Confirm-UserChoice -Prompt "Add it to the system PATH (requires Admin)?" -DefaultChoice 'y') {
-            if (Test-IsAdmin) {
-                [Environment]::SetEnvironmentVariable("Path", ($env:Path + ";" + $striimLibPath), "Machine")
-                Write-Host "[Config ] Success: PATH updated (already elevated)."
-                $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") # Refresh current session
-            } else {
-                Write-Host "[Config ]  Elevating permissions to update PATH..."
-                $command = "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';$striimLibPath'), 'Machine')"
-                if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $striimInstallPath) -eq 0) {
-                    Write-Host "[Config ] Success: Striim lib directory added to PATH. Please restart your terminal to see the change."
+                    Write-Host "[Envrnmt] Relaunching script from the Striim directory. A new PowerShell window will open."
+                    $relaunchCommand = "Start-Process powershell.exe -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File `"$newScriptPath`" $arguments' -WorkingDirectory `"$installPath`""
+                    Invoke-Expression $relaunchCommand
+                    exit 0 # Exit the current script
                 } else {
-                    Write-Host "[Config ] Error: Failed to add Striim lib directory to PATH." -ForegroundColor Red
+                    # User wants to download a new version, proceed to the full installation flow.
+                    Invoke-StriimInstallation
                 }
-            }
-        }
-    }
-
-
-    # 6. Check for required DLLs
-    $requiredDlls = $AllDownloads | Where-Object { $_.Category -eq "Dependency" }
-    foreach ($dllInfo in $requiredDlls) {
-        $dllPath = Join-Path $striimLibPath $dllInfo.Name
-        if (Test-Path $dllPath) {
-            Write-Host "[DLLs   ] Success: $($dllInfo.Name) found."
-        } else {
-            Write-Host "[DLLs   ] Fail***: $($dllInfo.Name) not found."
-            $downloadedDllPath = Get-LocalOrDownload -FileName $dllInfo.Name -Url $dllInfo.Url -PromptMessage "Download it now?" -LogPrefix "DLLs"
-            if ($downloadedDllPath) {
-                Copy-Item $downloadedDllPath $striimLibPath -Force
-                Write-Host "[DLLs   ] Success: $($dllInfo.Name) copied to $striimLibPath"
             } else {
-                Write-Host "[DLLs   ] Info: Skipping $($dllInfo.Name)."
+                # No existing install found in default locations, and not in a Striim dir.
+                # Proceed to the full installation flow.
+                Invoke-StriimInstallation
             }
         }
-    }
 
-    # 7. Check Java Version
-    $requiredJavaVersion = if ([int]$majorVersion -le 4) { 8 } else { 11 }
-    $javaDownloadInfo = $AllDownloads | Where-Object { $_.Category -eq "Java" -and (($requiredJavaVersion -eq 8 -and $_.MaxVersion -lt 5) -or ($requiredJavaVersion -eq 11 -and $_.MinVersion -ge 5)) } | Select-Object -First 1
+        # --- Startup Summary (Standard Mode) ---
+        Write-Host "`nStarting Striim Configuration Check..."
+        Write-Host "------------------------------------------"
+        Write-Host "[Checks Summary] The following validations will occur:"
+        Write-Host "  • [System]        Verify ≥15GB free space on C: drive"
+        Write-Host "  • [Node Type]     Auto-detect Agent/Node or prompt for selection"
+        Write-Host "  • [Config Files]  Validate agent.conf/startUp.properties settings"
+        Write-Host "  • [Firewall]      AGENT ONLY: Check required inbound/outbound firewall rules (requires Admin) $([char]0x27a4)" -ForegroundColor Green
+        Write-Host "  • [System PATH]   Add Striim lib directory to system PATH (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
+        Write-Host "  • [Dependencies]  Verify required DLLs and offer to download them"
+        Write-Host "  • [Java Check]    Ensure compatible Java version is installed and offer download if needed"
+        Write-Host "  • [Security]      Setup Integrated Security sqljdbc_auth.dll (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
+        Write-Host "  • [Prereqs]       Verify required software (VC++ Redist, OLE DB Driver)" -ForegroundColor Green
+        Write-Host "  • [Patches]       Apply critical fixes for Striim v4.2.0.20 (if applicable)"
+        Write-Host "  • [Service]       Configure Striim as a Windows Service (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
+        Write-Host "  • [JKS Config]    Prompt to generate/recreate JKS and key files (requires Admin) $([char]0x27a4)" -ForegroundColor Yellow
+        Write-Host "  • [Drivers]       AGENT ONLY: Prompt to install common JDBC drivers" -ForegroundColor Green
+        Write-Host "------------------------------------------"
+        Read-Host "`nPress Enter to continue or Ctrl+C to abort..."
 
-    $installedJavaVersion = 0
-    $javaCheckCmd = Get-Command java -ErrorAction SilentlyContinue
-    if ($javaCheckCmd) {
-        $versionOutput = java -version 2>&1
-        $versionString = ($versionOutput | Select-String 'version "([^"]+)"').Matches.Groups[1].Value
-        if ($versionString) {
-            Write-Host "[Java   ] Success: Found installed Java version string: `"$versionString`""
-            if ($versionString -match "^11\.") {
-                $installedJavaVersion = 11
-            } elseif ($versionString -match "^1\.8") {
-                $installedJavaVersion = 8
-            }
+        # --- Environment Validation ---
+        # 1. Check Disk Space
+        if ((Get-PSDrive -Name C).Free / 1GB -lt 15) {
+            throw "[Envrnmt] Insufficient disk space on C: drive. At least 15 GB is required."
         } else {
-             Write-Host "[Java   ] Warning: Could not parse version from 'java -version' output." -ForegroundColor Yellow
+            Write-Host "[Envrnmt]       Sufficient disk space available on C: drive."
         }
-    }
 
-    if ($installedJavaVersion -eq $requiredJavaVersion) {
-        Write-Host "[Java   ] Success: Required Java version $requiredJavaVersion is installed."
-    } else {
-        $foundVersionString = if ($installedJavaVersion -gt 0) { $installedJavaVersion } else { "None" }
-        Write-Host "[Java   ] Fail***: Java version mismatch. Required: $requiredJavaVersion, Found: $foundVersionString." -ForegroundColor Yellow
-        $javaInstallerPath = Get-LocalOrDownload -FileName $javaDownloadInfo.Name -Url $javaDownloadInfo.Url -PromptMessage "Download required Java version $requiredJavaVersion now?" -LogPrefix "Java"
-        if ($javaInstallerPath) {
-            if (Confirm-UserChoice -Prompt "Java installer available at $javaInstallerPath. Run installer now (as administrator)?" -DefaultChoice 'y') {
-                $command = "Start-Process -FilePath '$javaInstallerPath' -Wait -PassThru | Wait-Process"
-                if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir) -eq 0) {
-                    Write-Host "[Java   ] Installer launched successfully."
+        # 2. Detect Node Type
+        $nodeType = ""
+        if (Test-Path $agentConfPath) {
+            $nodeType = "A"
+            Write-Host "[Envrnmt]       -> AGENT Environment detected."
+        } elseif (Test-Path $startUpPropsPath) {
+            $nodeType = "N"
+            Write-Host "[Envrnmt]       -> NODE environment detected."
+        } else {
+            # This case should technically not be reached due to the initial check, but it's good practice.
+            throw "Striim not found. Please place the script in a Striim installation directory and re-run."
+        }
+        Write-Host "[Envrnmt] Success: Striim Install Path set to: $striimInstallPath"
+
+        # Define core paths now that install path is confirmed
+        $striimLibPath = Join-Path -Path $striimInstallPath -ChildPath "lib"
+        $striimConfPath = Join-Path -Path $striimInstallPath -ChildPath "conf"
+        $striimBinPath = Join-Path -Path $striimInstallPath -ChildPath "bin"
+
+        # Get Striim Version
+        $striimJarFile = Get-ChildItem -Path $striimLibPath -Filter "Platform-*.jar" | Select-Object -First 1
+        if (-not $striimJarFile) { throw "[Striim ] Fail***: Could not find Striim JAR file to determine version." }
+        $striimVersionString = $striimJarFile.Name -replace '^Platform-([\d\.]+)\.jar$', '$1'
+        $majorVersion = $striimVersionString.Split('.')[0]
+        Write-Host "[Striim  ] Success: Found Striim version $striimVersionString (Major version $majorVersion)"
+
+
+        # --- Configuration Checks ---
+        # 4. Update Configuration Files
+        if ($nodeType -eq "A") {
+            Write-Host "[Config ]       -> AGENT -> Specific Tests for configuration:"
+            $configValues = Update-ConfigFile -ConfigPath $agentConfPath -RequiredProps "striim.cluster.clusterName", "striim.node.servernode.address" -OptionalProps "MEM_MAX"
+            $jksFileName = "aks.jks"; $pwdFileName = "aksKey.pwd"; $configScriptName = "aksConfig.bat"; $configType = "AKS"
+
+            # --- Firewall Check ---
+            if ($configValues -and $configValues.ContainsKey("striim.node.servernode.address")) {
+                Test-FirewallRules -ServerAddress $configValues["striim.node.servernode.address"]
+            } else {
+                Write-Host "[Firewall] Skipping check because 'striim.node.servernode.address' could not be read." -ForegroundColor Yellow
+            }
+
+        } elseif ($nodeType -eq "N") {
+            Write-Host "[Config ]       -> NODE -> Specific Tests for configuration:"
+            Update-ConfigFile -ConfigPath $startUpPropsPath -RequiredProps "CompanyName", "LicenceKey", "ProductKey", "WAClusterName" -OptionalProps "MEM_MAX"
+            $jksFileName = "sks.jks"; $pwdFileName = "sksKey.pwd"; $configScriptName = "sksConfig.bat"; $configType = "SKS"
+        }
+
+        # 5. Check System PATH
+        Write-Host "[Config ]       -> Striim Lib Path set to: $striimLibPath"
+        $normalizedEnvPath = ($env:Path -split ';').TrimEnd('\')
+        $normalizedStriimLibPath = $striimLibPath.TrimEnd('\')
+        if ($normalizedEnvPath -icontains $normalizedStriimLibPath) { # Use -icontains for case-insensitivity
+            Write-Host "[Config ] Success: Striim lib directory found in PATH."
+        } else {
+            Write-Host "[Config ] Fail***: Striim lib directory not found in PATH."
+            if (Confirm-UserChoice -Prompt "Add it to the system PATH (requires Admin)?" -DefaultChoice 'y') {
+                if (Test-IsAdmin) {
+                    [Environment]::SetEnvironmentVariable("Path", ($env:Path + ";" + $striimLibPath), "Machine")
+                    Write-Host "[Config ] Success: PATH updated (already elevated)."
+                    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") # Refresh current session
                 } else {
-                    Write-Host "[Java   ] Installer launch failed." -ForegroundColor Red
+                    Write-Host "[Config ]  Elevating permissions to update PATH..."
+                    $command = "[Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';$striimLibPath'), 'Machine')"
+                    if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $striimInstallPath) -eq 0) {
+                        Write-Host "[Config ] Success: Striim lib directory added to PATH. Please restart your terminal to see the change."
+                    } else {
+                        Write-Host "[Config ] Error: Failed to add Striim lib directory to PATH." -ForegroundColor Red
+                    }
                 }
             }
         }
-    }
 
-    # 8. Integrated Security Setup
-    $sqljdbcAuthDllPath = "C:\Windows\System32\sqljdbc_auth.dll"
-    if (Test-Path $sqljdbcAuthDllPath) {
-        Write-Host "[Int Sec] Success: sqljdbc_auth.dll already exists in C:\Windows\System32."
-    } else {
-        if (Confirm-UserChoice -Prompt "Plan to use Integrated Security (requires sqljdbc_auth.dll)?" -DefaultChoice 'y') {
-            $sourceDllPath = Join-Path $striimLibPath "sqljdbc_auth.dll"
-            if (Test-Path $sourceDllPath) {
-                if (Confirm-UserChoice -Prompt "Found sqljdbc_auth.dll in lib. Copy to System32 (requires Admin)?" -DefaultChoice 'y') {
-                     $command = "Copy-Item -Path '$sourceDllPath' -Destination '$sqljdbcAuthDllPath' -Force"
-                     if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $striimInstallPath) -eq 0) {
-                         Write-Host "[Int Sec] Success: Copied sqljdbc_auth.dll to System32."
-                     } else {
-                         Write-Host "[Int Sec] Error: Failed to copy DLL." -ForegroundColor Red
-                     }
-                }
+
+        # 6. Check for required DLLs
+        $requiredDlls = $AllDownloads | Where-Object { $_.Category -eq "Dependency" }
+        foreach ($dllInfo in $requiredDlls) {
+            $dllPath = Join-Path $striimLibPath $dllInfo.Name
+            if (Test-Path $dllPath) {
+                Write-Host "[DLLs   ] Success: $($dllInfo.Name) found."
             } else {
-                $authDllInfo = $AllDownloads | Where-Object { $_.Name -eq "sqljdbc_auth.dll" }
-                $downloadedDllPath = Get-LocalOrDownload -FileName $authDllInfo.Name -Url $authDllInfo.Url -PromptMessage "sqljdbc_auth.dll not found. Download it now?" -LogPrefix "Int Sec"
+                Write-Host "[DLLs   ] Fail***: $($dllInfo.Name) not found."
+                $downloadedDllPath = Get-LocalOrDownload -FileName $dllInfo.Name -Url $dllInfo.Url -PromptMessage "Download it now?" -LogPrefix "DLLs"
                 if ($downloadedDllPath) {
-                    if (Confirm-UserChoice -Prompt "Download complete. Copy to System32 now (requires Admin)?" -DefaultChoice 'y') {
-                        $command = "Copy-Item -Path '$downloadedDllPath' -Destination '$sqljdbcAuthDllPath' -Force"
-                        if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir) -eq 0) {
-                            Write-Host "[Int Sec] Success: Copied sqljdbc_auth.dll to System32."
-                        } else {
-                            Write-Host "[Int Sec] Error: Failed to copy downloaded DLL." -ForegroundColor Red
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    # 9. Version-specific Patches
-    $patches = $AllDownloads | Where-Object { $_.Category -eq "Patch" -and $striimVersionString -eq $_.MinVersion }
-    if ($patches) {
-        Write-Host "[Patches] Patches are available for version $striimVersionString."
-        $baseFilesExist = $patches | ForEach-Object { Test-Path (Join-Path $striimLibPath $_.TargetFile) }
-        if ($baseFilesExist -contains $true) {
-            if (Confirm-UserChoice -Prompt "One or more files that can be patched exist. Apply patches now?" -DefaultChoice 'y') {
-                foreach ($patch in $patches) {
-                    Write-Host "[Patches] Applying patch for $($patch.TargetFile)..."
-                    $patchFilePath = Get-LocalOrDownload -FileName $patch.Name -Url $patch.Url -PromptMessage "Download patch $($patch.Name)?" -LogPrefix "Patches"
-                    if ($patchFilePath) {
-                        $destinationPath = Join-Path $striimLibPath $patch.TargetFile
-                        try {
-                            Move-Item -Path $patchFilePath -Destination $destinationPath -Force -ErrorAction Stop
-                            Write-Host "[Patches] Success: Patched $($patch.TargetFile)."
-                        } catch {
-                            Write-Host "[Patches] Error: Failed to apply patch for $($patch.TargetFile). $($_.Exception.Message)" -ForegroundColor Red
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        Write-Host "[Patches] No specific patches identified for Striim version $striimVersionString in this script."
-    }
-
-
-    # 10. Check Software Requirements
-    Write-Host "[Softwre] Checking for required software... (This may take a moment)"
-    # Using Get-WmiObject as it was previously working, though it can be slow.
-    $installedSoftware = Get-WmiObject -Class Win32_Product -ErrorAction SilentlyContinue
-    if (-not $installedSoftware) {
-        Write-Host "[Softwre] Warning: Could not retrieve list of installed software via WMI. Skipping this check." -ForegroundColor Yellow
-    } else {
-
-        # --- Requirement 1: Visual C++ Redistributable ---
-        $vcRedistInfo = $AllDownloads | Where-Object { $_.Name -eq "vc_redist.x64.exe" }
-        $vcRedistName = "Microsoft Visual C++" # Generic name to match multiple versions
-        $vcRedistMinVersion = "14.0"
-
-        # Note: Get-WmiObject uses 'Name' property, not 'DisplayName'
-        $foundVcRedist = $installedSoftware | Where-Object {
-            $_.Name -like "*$vcRedistName*"
-        } | Where-Object {
-            $_.Version -match '^\d' -and [version]($_.Version -replace ',','.') -ge [version]$vcRedistMinVersion
-        }
-
-        if ($foundVcRedist) {
-            $vcRedist = $foundVcRedist | Select-Object -First 1
-            Write-Host "[Softwre] Success: Found compatible $($vcRedist.Name) version $($vcRedist.Version)."
-        } else {
-            Write-Host "[Softwre] Fail***: Did not find required version of 'Microsoft Visual C++ 2015-2022 Redistributable'." -ForegroundColor Yellow
-            $installerPath = Get-LocalOrDownload -FileName $vcRedistInfo.Name -Url $vcRedistInfo.Url -PromptMessage "Download and install '$($vcRedistInfo.Name)' now?" -LogPrefix "Softwre"
-            if ($installerPath) {
-                if (Confirm-UserChoice -Prompt "Installer available at '$installerPath'. Run it now (as administrator)?" -DefaultChoice 'y') {
-                    $command = "Start-Process -FilePath '$installerPath' -Wait -PassThru | Wait-Process"
-                    $exitCode = Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir
-                    if ($exitCode -ne 0 -and $exitCode -ne 3010) { # 3010 is success, restart required
-                        Write-Host "[Softwre] Warning: Installer process exited with code $exitCode." -ForegroundColor Yellow
-                    } else {
-                        Write-Host "[Softwre] Installer finished. A system restart may be required."
-                    }
+                    Copy-Item $downloadedDllPath $striimLibPath -Force
+                    Write-Host "[DLLs   ] Success: $($dllInfo.Name) copied to $striimLibPath"
+                } else {
+                    Write-Host "[DLLs   ] Info: Skipping $($dllInfo.Name)."
                 }
             }
         }
 
-        # --- Requirement 2: Microsoft OLE DB Driver for SQL Server ---
-        $oleDbInfo = $AllDownloads | Where-Object { $_.Name -eq "msoledbsql.msi" }
-        $oleDbDriverName = "Microsoft OLE DB Driver for SQL Server"
-        $oleDbRequiredVersions = @("18.2.3.0", "18.7.4.0") # Add any other acceptable versions here
-        $installedDriver = $installedSoftware | Where-Object { $_.Name -like "*$oleDbDriverName*" }
+        # 7. Check Java Version
+        $requiredJavaVersion = if ([int]$majorVersion -le 4) { 8 } else { 11 }
+        $javaDownloadInfo = $AllDownloads | Where-Object { $_.Category -eq "Java" -and (($requiredJavaVersion -eq 8 -and $_.MaxVersion -lt 5) -or ($requiredJavaVersion -eq 11 -and $_.MinVersion -ge 5)) } | Select-Object -First 1
 
-        $foundCorrectVersion = $false
-        if ($installedDriver) {
-            foreach ($driver in $installedDriver) {
-                if ($oleDbRequiredVersions -contains $driver.Version) {
-                    Write-Host "[Softwre] Success: $oleDbDriverName version $($driver.Version) found. Meets requirement."
-                    $foundCorrectVersion = $true
-                    break
-                }
-            }
-        }
-
-        if (-not $foundCorrectVersion) {
-            $installedVersions = if ($installedDriver) { ($installedDriver.Version | ForEach-Object { $_.ToString() }) -join ", " } else { "None" }
-            Write-Host "[Softwre] Fail***: A required version of $oleDbDriverName was not found (Found: $installedVersions)." -ForegroundColor Yellow
-            $installerPath = Get-LocalOrDownload -FileName $oleDbInfo.Name -Url $oleDbInfo.Url -PromptMessage "Download and install '$oleDbDriverName' now?" -LogPrefix "Softwre"
-            if ($installerPath) {
-                if (Confirm-UserChoice -Prompt "Installer available at '$installerPath'. Run it now (as administrator)?" -DefaultChoice 'y') {
-                    # FIX: Call the .msi directly, not via msiexec.exe, to allow Wait-Process to work correctly.
-                    $command = "Start-Process -FilePath '$installerPath' -Wait -PassThru | Wait-Process"
-                    $exitCode = Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir
-                    if ($exitCode -ne 0 -and $exitCode -ne 3010) {
-                        Write-Host "[Softwre] Warning: Installer process exited with code $exitCode." -ForegroundColor Yellow
-                    } else {
-                        Write-Host "[Softwre] Installer finished. A system restart may be required."
-                    }
-                }
-            }
-        }
-    }
-
-    # 11. Check Striim Service
-    $serviceName = if ($nodeType -eq "A") { "Striim Agent" } else { "Striim" }
-    if (Get-Service $serviceName -ErrorAction SilentlyContinue) {
-        Write-Host "[Service] Success: Striim service '$serviceName' is installed."
-    } else {
-        Write-Host "[Service] Striim service '$serviceName' is not installed."
-        if (Confirm-UserChoice -Prompt "Do you want to set up the service now (requires Admin)?" -DefaultChoice 'y') {
-            $serviceInfo = $AllDownloads | Where-Object { $_.Category -eq "ServiceInstaller" -and $_.NodeType -eq $nodeType } | Select-Object -First 1
-            if ($serviceInfo) {
-                $serviceFileName = $serviceInfo.Name.Replace("{VERSION}", $striimVersionString)
-                $serviceUrl = $serviceInfo.Url.Replace("{VERSION}", $striimVersionString)
-                $zipPath = Get-LocalOrDownload -FileName $serviceFileName -Url $serviceUrl -PromptMessage "Download service installer?" -LogPrefix "Service"
-
-                if ($zipPath) {
-                    $serviceConfigFolder = if ($nodeType -eq "A") { Join-Path $striimInstallPath "conf\windowsAgent" } else { Join-Path $striimInstallPath "conf\windowsService" }
-                    if (Test-Path $serviceConfigFolder) { Remove-Item $serviceConfigFolder -Recurse -Force }
-                    New-Item -ItemType Directory -Path $serviceConfigFolder -Force | Out-Null
-
-                    Write-Host "[Service] Extracting service files..."
-                    $tempExtractPath = Join-Path $downloadDir "service-temp"
-                    if (Test-Path $tempExtractPath) { Remove-Item $tempExtractPath -Recurse -Force }
-                    Expand-Archive -Path $zipPath -DestinationPath $tempExtractPath -Force
-
-                    $subItems = @(Get-ChildItem -Path $tempExtractPath -Force)
-                    if ($subItems.Count -eq 1 -and $subItems[0].PSIsContainer) {
-                        Write-Host "[Service] Moving contents from single subdirectory '$($subItems[0].Name)'..."
-                        Get-ChildItem -Path $subItems[0].FullName -Force | Move-Item -Destination $serviceConfigFolder -Force
-                    } else {
-                        $subItems | Move-Item -Destination $serviceConfigFolder -Force
-                    }
-
-                    Remove-Item $tempExtractPath -Recurse -Force
-                    Write-Host "[Service] Extraction and move complete."
-
-                    $setupScript = if ($nodeType -eq "A") { "setupWindowsAgent.ps1" } else { "setupWindowsService.ps1" }
-                    $setupScriptPath = Join-Path $serviceConfigFolder $setupScript
-
-                    if (Test-Path $setupScriptPath) {
-                        Write-Host "[Service] Running service setup script: $setupScriptPath"
-                        # FIX: Revert to the old, more robust method for running the setup script.
-                        $scriptExecutionCommand = "Set-Location -Path '$serviceConfigFolder'; & '$setupScriptPath'"
-                        $exitCode = Invoke-AsAdmin -ArgumentList $scriptExecutionCommand -WorkingDirectory $serviceConfigFolder
-                        if ($exitCode -eq 0) {
-                            Write-Host "[Service] Service setup script completed successfully."
-                        } else {
-                            Write-Host "[Service] Error: Service setup script failed (exit code: $exitCode)." -ForegroundColor Red
-                        }
-                    } else {
-                        Write-Host "[Service] Error: Setup script '$setupScript' not found after extraction." -ForegroundColor Red
-                    }
+        $installedJavaVersion = 0
+        $javaCheckCmd = Get-Command java -ErrorAction SilentlyContinue
+        if ($javaCheckCmd) {
+            $versionOutput = java -version 2>&1
+            $versionString = ($versionOutput | Select-String 'version "([^"]+)"').Matches.Groups[1].Value
+            if ($versionString) {
+                Write-Host "[Java   ] Success: Found installed Java version string: `"$versionString`""
+                if ($versionString -match "^11\.") {
+                    $installedJavaVersion = 11
+                } elseif ($versionString -match "^1\.8") {
+                    $installedJavaVersion = 8
                 }
             } else {
-                Write-Host "[Service] Error: Could not find service installer information for node type '$nodeType'." -ForegroundColor Red
+                 Write-Host "[Java   ] Warning: Could not parse version from 'java -version' output." -ForegroundColor Yellow
             }
         }
-    }
 
-    # 12. JKS/Key File Generation
-    Write-Host "[JKS Cfg] Checking $configType Key Store (JKS) and Password files..."
-    if ($jksFileName) { # Ensure node type was determined
-        $jksPath = Join-Path -Path $striimConfPath -ChildPath $jksFileName
-        $pwdPath = Join-Path -Path $striimConfPath -ChildPath $pwdFileName
-        $configScriptPath = Join-Path -Path $striimBinPath -ChildPath $configScriptName
-
-        $filesExist = (Test-Path $jksPath) -and (Test-Path $pwdPath)
-        $runScript = $false
-        if ($filesExist) {
-            if (Confirm-UserChoice -Prompt "JKS/PWD files exist. Re-create them (requires Admin)?" -DefaultChoice 'n') {
-                Write-Host "[JKS Cfg] Deleting existing files..."
-                Remove-Item $jksPath, $pwdPath -Force -ErrorAction SilentlyContinue
-                $runScript = $true
-            }
+        if ($installedJavaVersion -eq $requiredJavaVersion) {
+            Write-Host "[Java   ] Success: Required Java version $requiredJavaVersion is installed."
         } else {
-            if (Confirm-UserChoice -Prompt "JKS/PWD files do not exist. Create them now (requires Admin)?" -DefaultChoice 'y') {
-                $runScript = $true
+            $foundVersionString = if ($installedJavaVersion -gt 0) { $installedJavaVersion } else { "None" }
+            Write-Host "[Java   ] Fail***: Java version mismatch. Required: $requiredJavaVersion, Found: $foundVersionString." -ForegroundColor Yellow
+            $javaInstallerPath = Get-LocalOrDownload -FileName $javaDownloadInfo.Name -Url $javaDownloadInfo.Url -PromptMessage "Download required Java version $requiredJavaVersion now?" -LogPrefix "Java"
+            if ($javaInstallerPath) {
+                if (Confirm-UserChoice -Prompt "Java installer available at $javaInstallerPath. Run installer now (as administrator)?" -DefaultChoice 'y') {
+                    $command = "Start-Process -FilePath '$javaInstallerPath' -Wait -PassThru | Wait-Process"
+                    if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir) -eq 0) {
+                        Write-Host "[Java   ] Installer launched successfully."
+                    } else {
+                        Write-Host "[Java   ] Installer launch failed." -ForegroundColor Red
+                    }
+                }
             }
         }
 
-        if ($runScript) {
-            if (-not (Test-Path $configScriptPath)) {
-                Write-Host "[JKS Cfg] Error: Config script not found at $configScriptPath" -ForegroundColor Red
-            } else {
-                Write-Host "[JKS Cfg] Running '$configScriptName' as Administrator..."
-                $scriptDir = Split-Path $configScriptPath -Parent
-                # Use cmd /c to properly execute the batch file from PowerShell
-                $command = "cmd /c `"`"$configScriptPath`"`""
-                if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $scriptDir) -eq 0) {
-                    Write-Host "[JKS Cfg] Success: Script executed. Verifying files..."
-                    if ((Test-Path $jksPath) -and (Test-Path $pwdPath)) {
-                        Write-Host "[JKS Cfg] Success: JKS and PWD files created."
-                    } else {
-                        Write-Host "[JKS Cfg] Fail***: Script ran but files were not created. Check for errors." -ForegroundColor Red
+        # 8. Integrated Security Setup
+        $sqljdbcAuthDllPath = "C:\Windows\System32\sqljdbc_auth.dll"
+        if (Test-Path $sqljdbcAuthDllPath) {
+            Write-Host "[Int Sec] Success: sqljdbc_auth.dll already exists in C:\Windows\System32."
+        } else {
+            if (Confirm-UserChoice -Prompt "Plan to use Integrated Security (requires sqljdbc_auth.dll)?" -DefaultChoice 'y') {
+                $sourceDllPath = Join-Path $striimLibPath "sqljdbc_auth.dll"
+                if (Test-Path $sourceDllPath) {
+                    if (Confirm-UserChoice -Prompt "Found sqljdbc_auth.dll in lib. Copy to System32 (requires Admin)?" -DefaultChoice 'y') {
+                         $command = "Copy-Item -Path '$sourceDllPath' -Destination '$sqljdbcAuthDllPath' -Force"
+                         if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $striimInstallPath) -eq 0) {
+                             Write-Host "[Int Sec] Success: Copied sqljdbc_auth.dll to System32."
+                         } else {
+                             Write-Host "[Int Sec] Error: Failed to copy DLL." -ForegroundColor Red
+                         }
                     }
                 } else {
-                    Write-Host "[JKS Cfg] Error: Script execution failed." -ForegroundColor Red
+                    $authDllInfo = $AllDownloads | Where-Object { $_.Name -eq "sqljdbc_auth.dll" }
+                    $downloadedDllPath = Get-LocalOrDownload -FileName $authDllInfo.Name -Url $authDllInfo.Url -PromptMessage "sqljdbc_auth.dll not found. Download it now?" -LogPrefix "Int Sec"
+                    if ($downloadedDllPath) {
+                        if (Confirm-UserChoice -Prompt "Download complete. Copy to System32 now (requires Admin)?" -DefaultChoice 'y') {
+                            $command = "Copy-Item -Path '$downloadedDllPath' -Destination '$sqljdbcAuthDllPath' -Force"
+                            if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir) -eq 0) {
+                                Write-Host "[Int Sec] Success: Copied sqljdbc_auth.dll to System32."
+                            } else {
+                                Write-Host "[Int Sec] Error: Failed to copy downloaded DLL." -ForegroundColor Red
+                            }
+                        }
+                    }
                 }
             }
         }
-    }
 
-    # --- JDBC Driver Installation ---
-    if ($nodeType -eq "A") {
-        Install-JdbcDrivers
-    }
-
-    # --- Restart Service if needed ---
-    if ($global:AgentRestartNeeded) {
-        if ((Get-Service $serviceName -ErrorAction SilentlyContinue) -and (Confirm-UserChoice -Prompt "`nDrivers were installed/updated. Restart the '$serviceName' service now (requires Admin)?" -DefaultChoice 'y')) {
-            if (Test-IsAdmin) {
-                Restart-Service -Name $serviceName -Force
-                Write-Host "[Service] Success: Service '$serviceName' restarted."
-            } else {
-                $command = "Restart-Service -Name '$serviceName' -Force"
-                if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $striimInstallPath) -eq 0) {
-                    Write-Host "[Service] Success: Service '$serviceName' restarted (elevated)."
-                } else {
-                    Write-Host "[Service] Error: Failed to restart service." -ForegroundColor Red
+        # 9. Version-specific Patches
+        $patches = $AllDownloads | Where-Object { $_.Category -eq "Patch" -and $striimVersionString -eq $_.MinVersion }
+        if ($patches) {
+            Write-Host "[Patches] Patches are available for version $striimVersionString."
+            $baseFilesExist = $patches | ForEach-Object { Test-Path (Join-Path $striimLibPath $_.TargetFile) }
+            if ($baseFilesExist -contains $true) {
+                if (Confirm-UserChoice -Prompt "One or more files that can be patched exist. Apply patches now?" -DefaultChoice 'y') {
+                    foreach ($patch in $patches) {
+                        Write-Host "[Patches] Applying patch for $($patch.TargetFile)..."
+                        $patchFilePath = Get-LocalOrDownload -FileName $patch.Name -Url $patch.Url -PromptMessage "Download patch $($patch.Name)?" -LogPrefix "Patches"
+                        if ($patchFilePath) {
+                            $destinationPath = Join-Path $striimLibPath $patch.TargetFile
+                            try {
+                                Move-Item -Path $patchFilePath -Destination $destinationPath -Force -ErrorAction Stop
+                                Write-Host "[Patches] Success: Patched $($patch.TargetFile)."
+                            } catch {
+                                Write-Host "[Patches] Error: Failed to apply patch for $($patch.TargetFile). $($_.Exception.Message)" -ForegroundColor Red
+                            }
+                        }
+                    }
                 }
             }
         } else {
-            Write-Host "`n[Service] Drivers were installed/updated. Please restart the Striim Agent service manually for changes to take effect." -ForegroundColor Yellow
+            Write-Host "[Patches] No specific patches identified for Striim version $striimVersionString in this script."
         }
+
+
+        # 10. Check Software Requirements
+        Write-Host "[Softwre] Checking for required software... (This may take a moment)"
+        # Using Get-WmiObject as it was previously working, though it can be slow.
+        $installedSoftware = Get-WmiObject -Class Win32_Product -ErrorAction SilentlyContinue
+        if (-not $installedSoftware) {
+            Write-Host "[Softwre] Warning: Could not retrieve list of installed software via WMI. Skipping this check." -ForegroundColor Yellow
+        } else {
+
+            # --- Requirement 1: Visual C++ Redistributable ---
+            $vcRedistInfo = $AllDownloads | Where-Object { $_.Name -eq "vc_redist.x64.exe" }
+            $vcRedistName = "Microsoft Visual C++" # Generic name to match multiple versions
+            $vcRedistMinVersion = "14.0"
+
+            # Note: Get-WmiObject uses 'Name' property, not 'DisplayName'
+            $foundVcRedist = $installedSoftware | Where-Object {
+                $_.Name -like "*$vcRedistName*"
+            } | Where-Object {
+                $_.Version -match '^\d' -and [version]($_.Version -replace ',','.') -ge [version]$vcRedistMinVersion
+            }
+
+            if ($foundVcRedist) {
+                $vcRedist = $foundVcRedist | Select-Object -First 1
+                Write-Host "[Softwre] Success: Found compatible $($vcRedist.Name) version $($vcRedist.Version)."
+            } else {
+                Write-Host "[Softwre] Fail***: Did not find required version of 'Microsoft Visual C++ 2015-2022 Redistributable'." -ForegroundColor Yellow
+                $installerPath = Get-LocalOrDownload -FileName $vcRedistInfo.Name -Url $vcRedistInfo.Url -PromptMessage "Download and install '$($vcRedistInfo.Name)' now?" -LogPrefix "Softwre"
+                if ($installerPath) {
+                    if (Confirm-UserChoice -Prompt "Installer available at '$installerPath'. Run it now (as administrator)?" -DefaultChoice 'y') {
+                        $command = "Start-Process -FilePath '$installerPath' -Wait -PassThru | Wait-Process"
+                        $exitCode = Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir
+                        if ($exitCode -ne 0 -and $exitCode -ne 3010) { # 3010 is success, restart required
+                            Write-Host "[Softwre] Warning: Installer process exited with code $exitCode." -ForegroundColor Yellow
+                        } else {
+                            Write-Host "[Softwre] Installer finished. A system restart may be required."
+                        }
+                    }
+                }
+            }
+
+            # --- Requirement 2: Microsoft OLE DB Driver for SQL Server ---
+            $oleDbInfo = $AllDownloads | Where-Object { $_.Name -eq "msoledbsql.msi" }
+            $oleDbDriverName = "Microsoft OLE DB Driver for SQL Server"
+            $oleDbRequiredVersions = @("18.2.3.0", "18.7.4.0") # Add any other acceptable versions here
+            $installedDriver = $installedSoftware | Where-Object { $_.Name -like "*$oleDbDriverName*" }
+
+            $foundCorrectVersion = $false
+            if ($installedDriver) {
+                foreach ($driver in $installedDriver) {
+                    if ($oleDbRequiredVersions -contains $driver.Version) {
+                        Write-Host "[Softwre] Success: $oleDbDriverName version $($driver.Version) found. Meets requirement."
+                        $foundCorrectVersion = $true
+                        break
+                    }
+                }
+            }
+
+            if (-not $foundCorrectVersion) {
+                $installedVersions = if ($installedDriver) { ($installedDriver.Version | ForEach-Object { $_.ToString() }) -join ", " } else { "None" }
+                Write-Host "[Softwre] Fail***: A required version of $oleDbDriverName was not found (Found: $installedVersions)." -ForegroundColor Yellow
+                $installerPath = Get-LocalOrDownload -FileName $oleDbInfo.Name -Url $oleDbInfo.Url -PromptMessage "Download and install '$oleDbDriverName' now?" -LogPrefix "Softwre"
+                if ($installerPath) {
+                    if (Confirm-UserChoice -Prompt "Installer available at '$installerPath'. Run it now (as administrator)?" -DefaultChoice 'y') {
+                        $command = "Start-Process -FilePath '$installerPath' -Wait -PassThru | Wait-Process"
+                        $exitCode = Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir
+                        if ($exitCode -ne 0 -and $exitCode -ne 3010) {
+                            Write-Host "[Softwre] Warning: Installer process exited with code $exitCode." -ForegroundColor Yellow
+                        } else {
+                            Write-Host "[Softwre] Installer finished. A system restart may be required."
+                        }
+                    }
+                }
+            }
+        }
+
+        # 11. Check Striim Service
+        $serviceName = if ($nodeType -eq "A") { "Striim Agent" } else { "Striim" }
+        if (Get-Service $serviceName -ErrorAction SilentlyContinue) {
+            Write-Host "[Service] Success: Striim service '$serviceName' is installed."
+        } else {
+            Write-Host "[Service] Striim service '$serviceName' is not installed."
+            if (Confirm-UserChoice -Prompt "Do you want to set up the service now (requires Admin)?" -DefaultChoice 'y') {
+                $serviceInfo = $AllDownloads | Where-Object { $_.psobject.Properties['NodeType'] -and $_.NodeType -eq $nodeType -and $_.Category -eq "ServiceInstaller" } | Select-Object -First 1
+                if ($serviceInfo) {
+                    $serviceFileName = $serviceInfo.Name.Replace("{VERSION}", $striimVersionString)
+                    $serviceUrl = $serviceInfo.Url.Replace("{VERSION}", $striimVersionString)
+                    $zipPath = Get-LocalOrDownload -FileName $serviceFileName -Url $serviceUrl -PromptMessage "Download service installer?" -LogPrefix "Service"
+
+                    if ($zipPath) {
+                        $serviceConfigFolder = if ($nodeType -eq "A") { Join-Path $striimInstallPath "conf\windowsAgent" } else { Join-Path $striimInstallPath "conf\windowsService" }
+                        if (Test-Path $serviceConfigFolder) { Remove-Item $serviceConfigFolder -Recurse -Force }
+                        New-Item -ItemType Directory -Path $serviceConfigFolder -Force | Out-Null
+
+                        Write-Host "[Service] Extracting service files..."
+                        $tempExtractPath = Join-Path $downloadDir "service-temp"
+                        if (Test-Path $tempExtractPath) { Remove-Item $tempExtractPath -Recurse -Force }
+                        Expand-Archive -Path $zipPath -DestinationPath $tempExtractPath -Force
+
+                        $subItems = @(Get-ChildItem -Path $tempExtractPath -Force)
+                        if ($subItems.Count -eq 1 -and $subItems[0].PSIsContainer) {
+                            Write-Host "[Service] Moving contents from single subdirectory '$($subItems[0].Name)'..."
+                            Get-ChildItem -Path $subItems[0].FullName -Force | Move-Item -Destination $serviceConfigFolder -Force
+                        } else {
+                            $subItems | Move-Item -Destination $serviceConfigFolder -Force
+                        }
+
+                        Remove-Item $tempExtractPath -Recurse -Force
+                        Write-Host "[Service] Extraction and move complete."
+
+                        $setupScript = if ($nodeType -eq "A") { "setupWindowsAgent.ps1" } else { "setupWindowsService.ps1" }
+                        $setupScriptPath = Join-Path $serviceConfigFolder $setupScript
+
+                        if (Test-Path $setupScriptPath) {
+                            Write-Host "[Service] Running service setup script: $setupScriptPath"
+                            $scriptExecutionCommand = "Set-Location -Path '$serviceConfigFolder'; & '$setupScriptPath'"
+                            $exitCode = Invoke-AsAdmin -ArgumentList $scriptExecutionCommand -WorkingDirectory $serviceConfigFolder
+                            if ($exitCode -eq 0) {
+                                Write-Host "[Service] Service setup script completed successfully."
+                            } else {
+                                Write-Host "[Service] Error: Service setup script failed (exit code: $exitCode)." -ForegroundColor Red
+                            }
+                        } else {
+                            Write-Host "[Service] Error: Setup script '$setupScript' not found after extraction." -ForegroundColor Red
+                        }
+                    }
+                } else {
+                    Write-Host "[Service] Error: Could not find service installer information for node type '$nodeType'." -ForegroundColor Red
+                }
+            }
+        }
+
+        # 12. JKS/Key File Generation
+        Write-Host "[JKS Cfg] Checking $configType Key Store (JKS) and Password files..."
+        if ($jksFileName) { # Ensure node type was determined
+            $jksPath = Join-Path -Path $striimConfPath -ChildPath $jksFileName
+            $pwdPath = Join-Path -Path $striimConfPath -ChildPath $pwdFileName
+            $configScriptPath = Join-Path -Path $striimBinPath -ChildPath $configScriptName
+
+            $filesExist = (Test-Path $jksPath) -and (Test-Path $pwdPath)
+            $runScript = $false
+            if ($filesExist) {
+                if (Confirm-UserChoice -Prompt "JKS/PWD files exist. Re-create them (requires Admin)?" -DefaultChoice 'n') {
+                    Write-Host "[JKS Cfg] Deleting existing files..."
+                    Remove-Item $jksPath, $pwdPath -Force -ErrorAction SilentlyContinue
+                    $runScript = $true
+                }
+            } else {
+                if (Confirm-UserChoice -Prompt "JKS/PWD files do not exist. Create them now (requires Admin)?" -DefaultChoice 'y') {
+                    $runScript = $true
+                }
+            }
+
+            if ($runScript) {
+                if (-not (Test-Path $configScriptPath)) {
+                    Write-Host "[JKS Cfg] Error: Config script not found at $configScriptPath" -ForegroundColor Red
+                } else {
+                    Write-Host "[JKS Cfg] Running '$configScriptName' as Administrator..."
+                    $scriptDir = Split-Path $configScriptPath -Parent
+                    # Use cmd /c to properly execute the batch file from PowerShell
+                    $command = "cmd /c `"`"$configScriptPath`"`""
+                    if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $scriptDir) -eq 0) {
+                        Write-Host "[JKS Cfg] Success: Script executed. Verifying files..."
+                        if ((Test-Path $jksPath) -and (Test-Path $pwdPath)) {
+                            Write-Host "[JKS Cfg] Success: JKS and PWD files created."
+                        } else {
+                            Write-Host "[JKS Cfg] Fail***: Script ran but files were not created. Check for errors." -ForegroundColor Red
+                        }
+                    } else {
+                        Write-Host "[JKS Cfg] Error: Script execution failed." -ForegroundColor Red
+                    }
+                }
+            }
+        }
+
+        # --- JDBC Driver Installation ---
+        if ($nodeType -eq "A") {
+            Install-JdbcDrivers
+        }
+
+        # --- Restart Service if needed ---
+        if ($global:AgentRestartNeeded) {
+            if ((Get-Service $serviceName -ErrorAction SilentlyContinue) -and (Confirm-UserChoice -Prompt "`nDrivers were installed/updated. Restart the '$serviceName' service now (requires Admin)?" -DefaultChoice 'y')) {
+                if (Test-IsAdmin) {
+                    Restart-Service -Name $serviceName -Force
+                    Write-Host "[Service] Success: Service '$serviceName' restarted."
+                } else {
+                    $command = "Restart-Service -Name '$serviceName' -Force"
+                    if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $striimInstallPath) -eq 0) {
+                        Write-Host "[Service] Success: Service '$serviceName' restarted (elevated)."
+                    } else {
+                        Write-Host "[Service] Error: Failed to restart service." -ForegroundColor Red
+                    }
+                }
+            } else {
+                Write-Host "`n[Service] Drivers were installed/updated. Please restart the Striim Agent service manually for changes to take effect." -ForegroundColor Yellow
+            }
+        }
+
+
+        # --- Final Summary ---
+        Write-Host "`n------------------------------------------"
+        Write-Host "Striim Configuration Check Finished." -ForegroundColor Green
+        Write-Host "------------------------------------------"
+        Write-Host "Please review the output for any warnings or errors."
+        Write-Host "Some changes (like System PATH or Java installation) may require restarting your terminal or system."
     }
-
-
-    # --- Final Summary ---
-    Write-Host "`n------------------------------------------"
-    Write-Host "Striim Configuration Check Finished." -ForegroundColor Green
-    Write-Host "------------------------------------------"
-    Write-Host "Please review the output for any warnings or errors."
-    Write-Host "Some changes (like System PATH or Java installation) may require restarting your terminal or system."
-
 }
 catch {
     Write-Host "`n------------------------------------------" -ForegroundColor Red
