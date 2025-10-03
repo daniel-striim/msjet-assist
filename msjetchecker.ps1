@@ -454,6 +454,9 @@ try {
             return
         }
 
+        # FIX: Explicitly import the NetSecurity module to ensure firewall cmdlets are available.
+        Import-Module NetSecurity
+
         # This part only runs if the script is already elevated
         if ([string]::IsNullOrEmpty($ServerAddress)) {
             Write-Host "[Firewall] Fail***: Server address is not defined. Cannot perform firewall checks." -ForegroundColor Red
@@ -769,17 +772,17 @@ try {
         if ((Get-PSDrive -Name C).Free / 1GB -lt 15) {
             throw "[Envrnmt] Insufficient disk space on C: drive. At least 15 GB is required."
         } else {
-            Write-Host "[Envrnmt]       Sufficient disk space available on C: drive."
+            Write-Host "[Envrnmt]        Sufficient disk space available on C: drive."
         }
 
         # 2. Detect Node Type
         $nodeType = ""
         if (Test-Path $agentConfPath) {
             $nodeType = "A"
-            Write-Host "[Envrnmt]       -> AGENT Environment detected."
+            Write-Host "[Envrnmt]        -> AGENT Environment detected."
         } elseif (Test-Path $startUpPropsPath) {
             $nodeType = "N"
-            Write-Host "[Envrnmt]       -> NODE environment detected."
+            Write-Host "[Envrnmt]        -> NODE environment detected."
         } else {
             # This case should technically not be reached due to the initial check, but it's good practice.
             throw "Striim not found. Please place the script in a Striim installation directory and re-run."
@@ -802,7 +805,7 @@ try {
         # --- Configuration Checks ---
         # 4. Update Configuration Files
         if ($nodeType -eq "A") {
-            Write-Host "[Config ]       -> AGENT -> Specific Tests for configuration:"
+            Write-Host "[Config ]        -> AGENT -> Specific Tests for configuration:"
             $configValues = Update-ConfigFile -ConfigPath $agentConfPath -RequiredProps "striim.cluster.clusterName", "striim.node.servernode.address" -OptionalProps "MEM_MAX"
             $jksFileName = "aks.jks"; $pwdFileName = "aksKey.pwd"; $configScriptName = "aksConfig.bat"; $configType = "AKS"
 
@@ -814,13 +817,13 @@ try {
             }
 
         } elseif ($nodeType -eq "N") {
-            Write-Host "[Config ]       -> NODE -> Specific Tests for configuration:"
+            Write-Host "[Config ]        -> NODE -> Specific Tests for configuration:"
             Update-ConfigFile -ConfigPath $startUpPropsPath -RequiredProps "CompanyName", "LicenceKey", "ProductKey", "WAClusterName" -OptionalProps "MEM_MAX"
             $jksFileName = "sks.jks"; $pwdFileName = "sksKey.pwd"; $configScriptName = "sksConfig.bat"; $configType = "SKS"
         }
 
         # 5. Check System PATH
-        Write-Host "[Config ]       -> Striim Lib Path set to: $striimLibPath"
+        Write-Host "[Config ]        -> Striim Lib Path set to: $striimLibPath"
         $normalizedEnvPath = ($env:Path -split ';').TrimEnd('\')
         $normalizedStriimLibPath = $striimLibPath.TrimEnd('\')
         if ($normalizedEnvPath -icontains $normalizedStriimLibPath) { # Use -icontains for case-insensitivity
@@ -850,15 +853,15 @@ try {
         foreach ($dllInfo in $requiredDlls) {
             $dllPath = Join-Path $striimLibPath $dllInfo.Name
             if (Test-Path $dllPath) {
-                Write-Host "[DLLs   ] Success: $($dllInfo.Name) found."
+                Write-Host "[DLLs    ] Success: $($dllInfo.Name) found."
             } else {
-                Write-Host "[DLLs   ] Fail***: $($dllInfo.Name) not found."
+                Write-Host "[DLLs    ] Fail***: $($dllInfo.Name) not found."
                 $downloadedDllPath = Get-LocalOrDownload -FileName $dllInfo.Name -Url $dllInfo.Url -PromptMessage "Download it now?" -LogPrefix "DLLs"
                 if ($downloadedDllPath) {
                     Copy-Item $downloadedDllPath $striimLibPath -Force
-                    Write-Host "[DLLs   ] Success: $($dllInfo.Name) copied to $striimLibPath"
+                    Write-Host "[DLLs    ] Success: $($dllInfo.Name) copied to $striimLibPath"
                 } else {
-                    Write-Host "[DLLs   ] Info: Skipping $($dllInfo.Name)."
+                    Write-Host "[DLLs    ] Info: Skipping $($dllInfo.Name)."
                 }
             }
         }
@@ -873,30 +876,30 @@ try {
             $versionOutput = java -version 2>&1
             $versionString = ($versionOutput | Select-String 'version "([^"]+)"').Matches.Groups[1].Value
             if ($versionString) {
-                Write-Host "[Java   ] Success: Found installed Java version string: `"$versionString`""
+                Write-Host "[Java    ] Success: Found installed Java version string: `"$versionString`""
                 if ($versionString -match "^11\.") {
                     $installedJavaVersion = 11
                 } elseif ($versionString -match "^1\.8") {
                     $installedJavaVersion = 8
                 }
             } else {
-                 Write-Host "[Java   ] Warning: Could not parse version from 'java -version' output." -ForegroundColor Yellow
+                 Write-Host "[Java    ] Warning: Could not parse version from 'java -version' output." -ForegroundColor Yellow
             }
         }
 
         if ($installedJavaVersion -eq $requiredJavaVersion) {
-            Write-Host "[Java   ] Success: Required Java version $requiredJavaVersion is installed."
+            Write-Host "[Java    ] Success: Required Java version $requiredJavaVersion is installed."
         } else {
             $foundVersionString = if ($installedJavaVersion -gt 0) { $installedJavaVersion } else { "None" }
-            Write-Host "[Java   ] Fail***: Java version mismatch. Required: $requiredJavaVersion, Found: $foundVersionString." -ForegroundColor Yellow
+            Write-Host "[Java    ] Fail***: Java version mismatch. Required: $requiredJavaVersion, Found: $foundVersionString." -ForegroundColor Yellow
             $javaInstallerPath = Get-LocalOrDownload -FileName $javaDownloadInfo.Name -Url $javaDownloadInfo.Url -PromptMessage "Download required Java version $requiredJavaVersion now?" -LogPrefix "Java"
             if ($javaInstallerPath) {
                 if (Confirm-UserChoice -Prompt "Java installer available at $javaInstallerPath. Run installer now (as administrator)?" -DefaultChoice 'y') {
                     $command = "Start-Process -FilePath '$javaInstallerPath' -Wait -PassThru | Wait-Process"
                     if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $downloadDir) -eq 0) {
-                        Write-Host "[Java   ] Installer launched successfully."
+                        Write-Host "[Java    ] Installer launched successfully."
                     } else {
-                        Write-Host "[Java   ] Installer launch failed." -ForegroundColor Red
+                        Write-Host "[Java    ] Installer launch failed." -ForegroundColor Red
                     }
                 }
             }
@@ -913,9 +916,9 @@ try {
                     if (Confirm-UserChoice -Prompt "Found sqljdbc_auth.dll in lib. Copy to System32 (requires Admin)?" -DefaultChoice 'y') {
                          $command = "Copy-Item -Path '$sourceDllPath' -Destination '$sqljdbcAuthDllPath' -Force"
                          if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $striimInstallPath) -eq 0) {
-                             Write-Host "[Int Sec] Success: Copied sqljdbc_auth.dll to System32."
+                              Write-Host "[Int Sec] Success: Copied sqljdbc_auth.dll to System32."
                          } else {
-                             Write-Host "[Int Sec] Error: Failed to copy DLL." -ForegroundColor Red
+                              Write-Host "[Int Sec] Error: Failed to copy DLL." -ForegroundColor Red
                          }
                     }
                 } else {
