@@ -1,4 +1,3 @@
-#region Script Parameters and File Manifest
 [CmdletBinding()]
 # The param block must be the first executable statement in the script.
 param(
@@ -34,7 +33,8 @@ $AllDownloads = @(
 
     # Java Versions
     [pscustomobject]@{ Name = "openlogic-openjdk-8u422-b05-windows-x64.msi"; Url = "https://builds.openlogic.com/downloadJDK/openlogic-openjdk/8u422-b05/openlogic-openjdk-8u422-b05-windows-x64.msi"; Category = "Java"; MinVersion = "0.0"; MaxVersion = "4.99" }
-    [pscustomobject]@{ Name = "microsoft-jdk-11.0.26-windows-x64.msi"; Url = "https://aka.ms/download-jdk/microsoft-jdk-11.0.26-windows-x64.msi"; Category = "Java"; MinVersion = "5.0"; MaxVersion = "99.9" }
+    [pscustomobject]@{ Name = "microsoft-jdk-11.0.26-windows-x64.msi"; Url = "https://aka.ms/download-jdk/microsoft-jdk-11.0.26-windows-x64.msi"; Category = "Java"; MinVersion = "5.0"; MaxVersion = "5.3" }
+    [pscustomobject]@{ Name = "microsoft-jdk-17.0.18-windows-x64.msi"; Url = "https://aka.ms/download-jdk/microsoft-jdk-17.0.18-windows-x64.msi"; Category = "Java"; MinVersion = "5.4"; MaxVersion = "99.9" }
 
     # Security
     [pscustomobject]@{ Name = "sqljdbc_auth.dll"; Url = "https://github.com/daniel-striim/StriimQueryAutoLoader/raw/main/MSJet/sqljdbc_auth.dll"; Category = "Security"; MinVersion = "0.0"; MaxVersion = "99.9" }
@@ -795,7 +795,8 @@ try {
         if (-not $striimJarFile) { throw "[Striim ] Fail***: Could not find Striim JAR file to determine version." }
         $striimVersionString = $striimJarFile.Name -replace '^Platform-([\d\.]+)\.jar$', '$1'
         $majorVersion = $striimVersionString.Split('.')[0]
-        Write-Host "[Striim  ] Success: Found Striim version $striimVersionString (Major version $majorVersion)"
+        $minorVersion = $striimVersionString.Split('.')[1]
+        Write-Host "[Striim  ] Success: Found Striim version $striimVersionString (Major version $majorVersion, Minor version $minorVersion)"
 
 
         # --- Configuration Checks ---
@@ -857,8 +858,18 @@ try {
         }
 
         # 7. Check Java Version
-        $requiredJavaVersion = if ([int]$majorVersion -le 4) { 8 } else { 11 }
-        $javaDownloadInfo = $AllDownloads | Where-Object { $_.Category -eq "Java" -and (($requiredJavaVersion -eq 8 -and $_.MaxVersion -lt 5) -or ($requiredJavaVersion -eq 11 -and $_.MinVersion -ge 5)) } | Select-Object -First 1
+        if ([int]$majorVersion -le 4) {
+            $requiredJavaVersion = 8
+        } elseif ([int]$majorVersion -le 5) {
+            if ($minorVersion -eq 2) {
+                $requiredJavaVersion = 11
+            } else {
+                $requiredJavaVersion = 17
+            }
+        } else {
+            $requiredJavaVersion = 17
+        }
+        $javaDownloadInfo = $AllDownloads | Where-Object { $_.Category -eq "Java" -and (($requiredJavaVersion -eq 8 -and $_.MaxVersion -lt 5) -or ($requiredJavaVersion -eq 11 -and $_.MinVersion -ge 5.2) -or ($requiredJavaVersion -eq 17 -and $_.MinVersion -ge 5.4)) } | Select-Object -First 1
 
         $installedJavaVersion = 0
         $javaCheckCmd = Get-Command java -ErrorAction SilentlyContinue
@@ -867,7 +878,9 @@ try {
             $versionString = ($versionOutput | Select-String 'version "([^"]+)"').Matches.Groups[1].Value
             if ($versionString) {
                 Write-Host "[Java   ] Success: Found installed Java version string: `"$versionString`""
-                if ($versionString -match "^11\.") {
+                if ($versionString -match "^17\.") {
+                    $installedJavaVersion = 17
+                } elseif ($versionString -match "^11\.") {
                     $installedJavaVersion = 11
                 } elseif ($versionString -match "^1\.8") {
                     $installedJavaVersion = 8
@@ -1114,6 +1127,7 @@ try {
                     $scriptDir = Split-Path $configScriptPath -Parent
                     # Use cmd /c to properly execute the batch file from PowerShell
                     $command = "cmd /c `"`"$configScriptPath`"`""
+                    Write-Host "RUNNING COMMAND: $command"
                     if ((Invoke-AsAdmin -ArgumentList $command -WorkingDirectory $scriptDir) -eq 0) {
                         Write-Host "[JKS Cfg] Success: Script executed. Verifying files..."
                         if ((Test-Path $jksPath) -and (Test-Path $pwdPath)) {
