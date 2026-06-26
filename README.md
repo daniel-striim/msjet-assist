@@ -1,6 +1,15 @@
 # This is depricated. Please find the latest Striim Windows Installer, which supports MSJet configuration, here: 
 https://github.com/striim/windows-installer
 
+# 
+
+# 
+
+# 
+
+# 
+
+# Only use the following for versions before 5.X
 
 # Striim MSJet Environment Configuration Checker
 
