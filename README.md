@@ -1,3 +1,7 @@
+# This is depricated. Please find the latest Striim Windows Installer, which supports MSJet configuration, here: 
+https://github.com/striim/windows-installer
+
+
 # Striim MSJet Environment Configuration Checker
 
 This PowerShell script automates the validation, configuration, and setup of a Striim environment on Windows. It's designed to be a comprehensive tool to ensure a Striim Node or Agent is ready for operation, whether on a machine with or without internet access.
